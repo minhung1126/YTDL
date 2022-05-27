@@ -44,7 +44,7 @@ def video_dl(json_path):
         path += "%(title)s"
         if target['dynamic_range'] != "SDR":
             path += ".HDR"
-        # path += ".%(id)s"
+        path += ".%(id)s"
         path += ".%(ext)s"
 
         codec = f"{target['format_id']}+{(lambda x :140 if 'avc1' in x else 251)(target['vcodec'])}"
