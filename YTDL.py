@@ -1,4 +1,4 @@
-# ver 5.2
+# ver 5.3
 # Using yt-dlp
 
 import time
@@ -18,9 +18,9 @@ def video_dl(json_path):
 
     # Get the max of height of both SDR and HDR
     maxSdrHeight = max([format['height'] for format in meta['formats']
-                       if "height" in format and format['dynamic_range'] == "SDR"]+[0])
+                       if "height" in format and ('dynamic_range' not in format or format['dynamic_range'] == "SDR")]+[0])
     maxHdrHeight = max([format['height'] for format in meta['formats']
-                       if "height" in format and format['dynamic_range'] != "SDR"]+[0])
+                       if "height" in format and ('dynamic_range' in format and format['dynamic_range'] != "SDR")]+[0])
 
     targets = []
 
@@ -65,19 +65,17 @@ def video_dl(json_path):
         subprocess.run(f"yt-dlp {' '.join(args)}")
 
     for dirpath, dirnames, filenames in os.walk("./"):
-        if 'temp' in dirpath.replace("\\", "/").split("/")[0:2]:
-            continue
-        if os.path.split(dirpath)[-1] not in json_path.replace("\\", "/").split("/")[0:-1] or os.path.split(dirpath)[-1] == "":
-            continue
         for filename in filenames:
+            if ".info.json" in filename:
+                continue
             if os.path.splitext(filename)[-1] in ['.webp', '.part', '.jpg', '.vtt']:
                 os.remove(os.path.join(dirpath, filename))
                 continue
-            if os.path.splitext(filename)[0] == os.path.splitext(os.path.split(json_path)[-1])[0].replace(".info", ""):
+            # if os.path.splitext(filename)[0] in os.path.splitext(os.path.split(json_path)[-1])[0].replace(".info", ""):
+            if os.path.split(json_path)[-1][0:-10] in filename:
 
                 os.remove(json_path)
                 continue
-                
 
     for dirpath, dirnames, filenames in os.walk("./temp/"):
         if os.listdir(dirpath) == []:
