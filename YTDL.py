@@ -125,7 +125,6 @@ def start_dl():
 def info_dl(urls):
     if type(urls) == str:
         urls = [urls]
-
     for url in urls:
         args = []
         args.append("--write-info-json")
@@ -137,9 +136,7 @@ def info_dl(urls):
         else:
             args.append("-o \"/temp/%(title)s.%(id)s.%(ext)s\"")
         args.append(url)
-
         subprocess.run(f"yt-dlp {' '.join(args)}")
-
         print("="*72)
 
 
@@ -165,7 +162,6 @@ def main():
     ]
     print("\n".join(f"{explanation.index(e)+1}. {e}" for e in explanation))
     print("=" * 72)
-
     while True:
         if os.path.isdir("./temp/") and os.listdir("./temp/") != []:
             resp = input("Continue downloading?(Y/N) ").lower()
@@ -184,7 +180,6 @@ def main():
             #         if os.path.splitext(filename)[-1] != ".mkv":
             #             os.remove(os.path.join(dirname, filename))
             add_media()
-
         start_dl()
 
 
