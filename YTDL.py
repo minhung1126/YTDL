@@ -14,6 +14,23 @@ def video_dl(json_path):
     with open(json_path, "r", encoding="utf-8") as f:
         meta = json.loads(f.read())
 
+    # Renew video url to avoid expire
+    # get meta
+    webpage_url = meta['webpage_url']
+    cmd = f'yt-dlp --write-info-json --skip-download -o temp {webpage_url}'
+    subprocess.run(cmd)
+    try:
+        with open('temp.info.json', 'r', encoding='utf-8') as f:
+            new_meta = json.loads(f.read())
+    except ...:
+        ...
+    else:
+        os.remove('temp.info.json')
+    meta['formats'] = new_meta['formats']
+    # Update meta
+    with open(json_path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(meta, ensure_ascii=False))
+
     isSdr = meta['dynamic_range'] == "SDR"
 
     # Get the max of height of both SDR and HDR
@@ -158,14 +175,14 @@ def main():
                 shutil.rmtree("./temp/")
                 continue
         else:
-            for dirname, dirnames, filenames in os.walk("./"):
-                if dirname == "./temp":
-                    continue
-                if dirname == "./":
-                    continue
-                for filename in filenames:
-                    if os.path.splitext(filename)[-1] != ".mkv":
-                        os.remove(os.path.join(dirname, filename))
+            # for dirname, dirnames, filenames in os.walk("./"):
+            #     if dirname == "./temp":
+            #         continue
+            #     if dirname == "./":
+            #         continue
+            #     for filename in filenames:
+            #         if os.path.splitext(filename)[-1] != ".mkv":
+            #             os.remove(os.path.join(dirname, filename))
             add_media()
 
         start_dl()
