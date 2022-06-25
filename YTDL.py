@@ -116,9 +116,9 @@ def info_dl(urls):
         args.append("--no-playlist")
         args.append("--no-write-playlist-metafiles")
         if "playlist?list=" in url:
-            args.append("-o \"/temp/%(playlist)s/%(title)s.%(ext)s\"")
+            args.append("-o \"/temp/%(playlist)s/%(title)s.%(id)s.%(ext)s\"")
         else:
-            args.append("-o \"/temp/%(title)s.%(ext)s\"")
+            args.append("-o \"/temp/%(title)s.%(id)s.%(ext)s\"")
         args.append(url)
 
         subprocess.run(f"yt-dlp {' '.join(args)}")
