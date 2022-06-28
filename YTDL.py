@@ -14,6 +14,23 @@ def video_dl(json_path):
     with open(json_path, "r", encoding="utf-8") as f:
         meta = json.loads(f.read())
 
+    # Renew video url to avoid expire
+    # get meta
+    webpage_url = meta['webpage_url']
+    cmd = f'yt-dlp --write-info-json --skip-download -o temp {webpage_url}'
+    subprocess.run(cmd)
+    try:
+        with open('temp.info.json', 'r', encoding='utf-8') as f:
+            new_meta = json.loads(f.read())
+    except ...:
+        ...
+    else:
+        os.remove('temp.info.json')
+    meta['formats'] = new_meta['formats']
+    # Update meta
+    with open(json_path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(meta, ensure_ascii=False))
+
     isSdr = meta['dynamic_range'] == "SDR"
 
     # Get the max of height of both SDR and HDR
@@ -108,7 +125,6 @@ def start_dl():
 def info_dl(urls):
     if type(urls) == str:
         urls = [urls]
-
     for url in urls:
         args = []
         args.append("--write-info-json")
@@ -120,9 +136,7 @@ def info_dl(urls):
         else:
             args.append("-o \"/temp/%(title)s.%(id)s.%(ext)s\"")
         args.append(url)
-
         subprocess.run(f"yt-dlp {' '.join(args)}")
-
         print("="*72)
 
 
@@ -148,7 +162,6 @@ def main():
     ]
     print("\n".join(f"{explanation.index(e)+1}. {e}" for e in explanation))
     print("=" * 72)
-
     while True:
         if os.path.isdir("./temp/") and os.listdir("./temp/") != []:
             resp = input("Continue downloading?(Y/N) ").lower()
@@ -158,16 +171,15 @@ def main():
                 shutil.rmtree("./temp/")
                 continue
         else:
-            for dirname, dirnames, filenames in os.walk("./"):
-                if dirname == "./temp":
-                    continue
-                if dirname == "./":
-                    continue
-                for filename in filenames:
-                    if os.path.splitext(filename)[-1] != ".mkv":
-                        os.remove(os.path.join(dirname, filename))
+            # for dirname, dirnames, filenames in os.walk("./"):
+            #     if dirname == "./temp":
+            #         continue
+            #     if dirname == "./":
+            #         continue
+            #     for filename in filenames:
+            #         if os.path.splitext(filename)[-1] != ".mkv":
+            #             os.remove(os.path.join(dirname, filename))
             add_media()
-
         start_dl()
 
 
