@@ -1,0 +1,27 @@
+name: "Auto Release"
+
+on:
+  push:
+    branches:
+      - "main"
+  workflow_dispatch:
+
+jobs:
+  auto-release:
+    name: "Auto Release"
+    runs-on: "ubuntu-latest"
+
+    steps:
+      - name: "Get current date"
+        id: date
+        # run: echo "::set-output name=date::$(date +'%Y.%m.%d')"
+        run: echo "date=$(date +'%Y.%m.%d')" >> $GITHUB_OUTPUT
+
+      - name: "Release"
+        run: echo "Start"
+
+      - uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: ${{ secrets.GH_TOKEN }}
+          prerelease: false
+          automatic_release_tag: v${{ steps.date.outputs.date }}
