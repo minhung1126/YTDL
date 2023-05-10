@@ -2,6 +2,7 @@
 
 import json
 import os
+from datetime import datetime
 import sys
 import shutil
 import subprocess
@@ -20,9 +21,8 @@ class Video:
             meta_path (str, optional): _description_. Defaults to "".
         """
         self._VCODECS = ["avc1", "vp9", "av01"]
-
-        # May contain playlist info
-        self.url = url
+        self._SDR_FILENAME_TEMPLATE = r"%(title)s.%(id)s.%(ext)s"
+        self._HDR_FILENAME_TEMPLATE = r"%(title)s.HDR.%(id)s.%(ext)s"
 
         self._valid = True
         self._invalid_msg = ""
@@ -31,11 +31,12 @@ class Video:
             if url == "" and meta_path == "":
                 raise YTDLError("URL or meta_path must be provided by kargs")
             elif meta_path != "":
-                self._meta_path = meta_path
+                self._meta_path = os.path.join(
+                    '.', os.path.normpath(meta_path))
                 self._meta = self._read_meta()
                 self.webpage_url = self._get_webpage_url()
             else:
-                self._meta_path = self._dl_meta()
+                self._meta_path = self._dl_meta(url=url)
                 self._meta = self._read_meta()
                 self.webpage_url = self._get_webpage_url()
         except YTDLError as e:
@@ -45,7 +46,9 @@ class Video:
                 f.write(self._invalid_msg + '\n')
             return
 
-        self.custom_dest_dir = dest_dir
+        # If destdir="", then it will generate '.'
+        self.custom_dest_dir = os.path.normpath(dest_dir)
+        self._dest_dir_template = self._get_dest_dir_template()
 
         self.id = self._meta['id']
         self.title = self._meta['title']
@@ -55,6 +58,8 @@ class Video:
 
         self._targets = self._get_target_formats()
 
+        # Stimulate the result filepath, use to judge if downloaded
+        # Can be accessed
         self.SDR_dest_filepath = self._get_dest_filepath(is_HDR=False)
         self.HDR_dest_filepath = self._get_dest_filepath(is_HDR=True)
 
@@ -67,41 +72,73 @@ class Video:
 
         return
 
-    def _dl_meta(self) -> str:
+    def _dl_meta(self, url) -> str:
+        # args = [
+        #     'yt-dlp',
+        #     '--skip-download',
+        #     '--write-info-json',
+        #     '--no-playlist',
+        #     '-o', './temp/%(id)s',
+        #     url
+        # ]
+
+        # result = subprocess.run(args)
+        # if not result.returncode == 0:
+        #     #! Error
+        #     raise YTDLError(
+        #         f"Can't download the meta of this video (url: {self.url})")
+
+        # args = [
+        #     'yt-dlp',
+        #     '--skip-download',
+        #     '--encoding', 'utf-8',
+        #     '--print', '%(id)s.info.json',
+        #     self.url
+        # ]
+
+        # meta_path_result = subprocess.run(
+        #     args,
+        #     capture_output=True,
+        #     encoding='utf-8'
+        # )
+
+        # if not meta_path_result.returncode == 0:
+        #     #! Fail
+        #     ...
+
+        # return "./temp/"+meta_path_result.stdout.strip()
+
+        # In Wondows, upper case and lowercase is considered same
+        # To prevent case-problems, add a isotime.
+        # e.g. AAABBBCCC.info.json & AAABBBccc.info.json
         args = [
             'yt-dlp',
-            '--skip-download',
-            '--write-info-json',
-            '--no-playlist',
-            '-o', './temp/%(id)s',
-            self.url
-        ]
-
-        result = subprocess.run(args)
-        if not result.returncode == 0:
-            #! Error
-            raise YTDLError(
-                f"Can't download the meta of this video (url: {self.url})")
-
-        args = [
-            'yt-dlp',
-            '--skip-download',
             '--encoding', 'utf-8',
-            '--print', '%(id)s.info.json',
-            self.url
+            '--print', fr"./temp/{datetime.now().strftime(r'%Y%m%d%H%M%S%f')}.%(id)s.info.json",
+            '--print', '%()j',
+            url
         ]
 
-        meta_path_result = subprocess.run(
+        result = subprocess.run(
             args,
             capture_output=True,
             encoding='utf-8'
         )
 
-        if not meta_path_result.returncode == 0:
-            #! Fail
-            ...
+        if not result.returncode == 0:
+            raise YTDLError(
+                f"Can't download the meta of this video (url: {url})")
 
-        return "./temp/"+meta_path_result.stdout.strip()
+        lines = result.stdout.splitlines()
+
+        if not os.path.isdir(os.path.join('.', 'temp')):
+            os.mkdir(os.path.join('.', 'temp'))
+
+        meta_path = os.path.join('.', os.path.normpath(lines[0]))
+        with open(meta_path, 'w', encoding='utf-8', errors='ignore') as f:
+            f.write(lines[1])
+
+        return meta_path
 
     def _read_meta(self) -> dict:
         with open(self._meta_path, 'r', encoding='utf-8') as f:
@@ -112,7 +149,7 @@ class Video:
         result = subprocess.run(
             [
                 'yt-dlp',
-                '--print', '"%()j"',
+                '--print', '%()j',
                 '--encoding', 'utf-8',
                 self.webpage_url
             ],
@@ -124,7 +161,7 @@ class Video:
             ...
 
         # [1:-2] remove '"'
-        self._meta['formats'] = json.loads(result.stdout[1:-2])['formats']
+        self._meta['formats'] = json.loads(result.stdout.strip())['formats']
         with open(self._meta_path, 'w', encoding='utf-8') as f:
             f.write(json.dumps(self._meta))
 
@@ -176,35 +213,64 @@ class Video:
 
         return max(HDR_format_height)
 
-    def _get_dest_filepath(self, is_HDR: bool):
-        if self.custom_dest_dir != "":
-            path = self.custom_dest_dir
+    def _get_dest_dir_template(self):
+        if 'playlist' in self._meta and self._meta['playlist'] is not None:
+            return os.path.join(self.custom_dest_dir, r"%(playlist)s")
         else:
-            path = "./"
-            if "playlist" in self._meta:
-                path += "%(playlist)s/"
+            return self.custom_dest_dir
 
-        path = os.path.join(path, "%(title)s")
-        if is_HDR:
-            path += ".HDR"
-        path += ".%(id)s"
-        # path += ".%(ext)s"
+    def _get_dest_filepath(self, is_HDR: bool):
+        # if self.custom_dest_dir != "":
+        #     path = self.custom_dest_dir
+        # else:
+        #     path = "./"
+        #     if "playlist" in self._meta:
+        #         path += "%(playlist)s/"
+
+        # path = os.path.join(path, "%(title)s")
+        # if is_HDR:
+        #     path += ".HDR"
+        # path += ".%(id)s"
+        # # path += ".%(ext)s"
+
+        # result = subprocess.run(
+        #     [
+        #         'yt-dlp',
+        #         '--load-info-json', self._meta_path,
+        #         '--encoding', 'utf-8',
+        #         '--print', path
+        #     ],
+        #     capture_output=True,
+        #     encoding='utf-8'
+        # )
+
+        # if result.returncode == 0:
+        #     return result.stdout.strip() + ".%(ext)s"
+        # else:
+        #     raise YTDLError("Fail to load path")
+
+        args = [
+            'yt-dlp',
+            '--load-info-json', self._meta_path,
+            '--encoding', 'utf-8',
+            '--print', os.path.join(
+                self._dest_dir_template,
+                self._HDR_FILENAME_TEMPLATE if is_HDR else self._SDR_FILENAME_TEMPLATE
+            )
+        ]
 
         result = subprocess.run(
-            [
-                'yt-dlp',
-                '--load-info-json', self._meta_path,
-                '--encoding', 'utf-8',
-                '--print', path
-            ],
+            args,
             capture_output=True,
-            encoding='utf-8'
+            encoding='utf-8',
         )
 
-        if result.returncode == 0:
-            return result.stdout.strip() + ".%(ext)s"
+        if not result.returncode == 0:
+            #! Fail
+            ...
+
         else:
-            raise YTDLError("Fail to load path")
+            return os.path.splitext(result.stdout.strip())[0]+".mkv"
 
     def _get_target_formats(self):
         all_formats = self._meta['formats']
@@ -306,8 +372,21 @@ class Video:
                 '--concurrent-fragments', '8',
                 '-f', gen_format_code(target),
                 # gen_path(target),
-                '-o', self.HDR_dest_filepath if target['dynamic_range'] != "SDR" else self.SDR_dest_filepath
+                # '-o', self.HDR_dest_filepath if target['dynamic_range'] != "SDR" else self.SDR_dest_filepath
             ]
+
+            if target['dynamic_range'] != "SDR":
+                args.extend([
+                    '-o',
+                    os.path.join(self._dest_dir_template,
+                                 self._SDR_FILENAME_TEMPLATE)
+                ])
+            else:
+                args.extend([
+                    '-o',
+                    os.path.join(self._dest_dir_template,
+                                 self._SDR_FILENAME_TEMPLATE)
+                ])
 
             result = subprocess.run(args)
 
