@@ -21,10 +21,12 @@ import YTDL
 
 
 def parse_and_dl_info(raw_text):
-    DOMAINS = ['youtube.com/watch?v=',
-               'youtu.be/',
-               'youtube.com/playlist?list=',
-               'youtube.com/shorts/']
+    DOMAINS = [
+        'youtube.com/watch?v=',
+        'youtu.be/',
+        'youtube.com/playlist?list=',
+        'youtube.com/shorts/'
+    ]
     IDLENGTH = {
         'youtube.com/watch?v=': 11,
         'youtu.be/': 11,
