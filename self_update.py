@@ -78,27 +78,6 @@ def program_files_update():
 
     os.remove('ytdlp_version_info.py')
 
-    # Get update_yt_dlp.cmd
-    # resp = requests.get(f"{api_url}/contents/update_yt_dlp.cmd")
-    # if not resp.ok:
-    #     print("Fail to download 'update_yt_dlp.cmd' info")
-    #     return
-
-    # data = resp.json()
-    # download_url = data['download_url']
-
-    # cmd_resp = requests.get(download_url)
-    # if not cmd_resp.ok:
-    #     print("Fail to download 'update_yt_dlp.cmd'")
-    #     return
-
-    # with open('update_yt_dlp.cmd', 'wb') as f:
-    #     f.write(cmd_resp.content)
-
-    # subprocess.run(['update_yt_dlp.cmd'], cwd=os.getcwd())
-
-    # os.remove(os.path.join(cwd, 'update_yt_dlp.cmd'))
-
     print("==================================================")
     print("如果發生任何錯誤，請截圖此CMD視窗並連絡開發者。\n"
           "If any error occured, please screenshot this cmd and contact the developer.")

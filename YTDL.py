@@ -73,41 +73,6 @@ class Video:
         return
 
     def _dl_meta(self, url) -> str:
-        # args = [
-        #     'yt-dlp',
-        #     '--skip-download',
-        #     '--write-info-json',
-        #     '--no-playlist',
-        #     '-o', './temp/%(id)s',
-        #     url
-        # ]
-
-        # result = subprocess.run(args)
-        # if not result.returncode == 0:
-        #     #! Error
-        #     raise YTDLError(
-        #         f"Can't download the meta of this video (url: {self.url})")
-
-        # args = [
-        #     'yt-dlp',
-        #     '--skip-download',
-        #     '--encoding', 'utf-8',
-        #     '--print', '%(id)s.info.json',
-        #     self.url
-        # ]
-
-        # meta_path_result = subprocess.run(
-        #     args,
-        #     capture_output=True,
-        #     encoding='utf-8'
-        # )
-
-        # if not meta_path_result.returncode == 0:
-        #     #! Fail
-        #     ...
-
-        # return "./temp/"+meta_path_result.stdout.strip()
-
         # In Wondows, upper case and lowercase is considered same
         # To prevent case-problems, add a isotime.
         # e.g. AAABBBCCC.info.json & AAABBBccc.info.json
@@ -220,35 +185,6 @@ class Video:
             return self.custom_dest_dir
 
     def _get_dest_filepath(self, is_HDR: bool):
-        # if self.custom_dest_dir != "":
-        #     path = self.custom_dest_dir
-        # else:
-        #     path = "./"
-        #     if "playlist" in self._meta:
-        #         path += "%(playlist)s/"
-
-        # path = os.path.join(path, "%(title)s")
-        # if is_HDR:
-        #     path += ".HDR"
-        # path += ".%(id)s"
-        # # path += ".%(ext)s"
-
-        # result = subprocess.run(
-        #     [
-        #         'yt-dlp',
-        #         '--load-info-json', self._meta_path,
-        #         '--encoding', 'utf-8',
-        #         '--print', path
-        #     ],
-        #     capture_output=True,
-        #     encoding='utf-8'
-        # )
-
-        # if result.returncode == 0:
-        #     return result.stdout.strip() + ".%(ext)s"
-        # else:
-        #     raise YTDLError("Fail to load path")
-
         args = [
             'yt-dlp',
             '--load-info-json', self._meta_path,
@@ -530,9 +466,6 @@ def main():
         "播放清單會自動下載到資料夾中",
         "下載過的檔案會自動跳過，不會重新下載",
         "若下載失敗，會自動跳過",
-        # "過程中如果下載速度降至kb等級，可以按一次Ctrl+C冷卻",
-        # "但若進度條後方有 (frag xx/xx) 則效果不大",
-        # "如果要結束下載，請按兩次Ctrl+C",
         "若要繼續下載，請在系統詢問時按'Y'後按'ENTER'即可",
         "若不要繼續下載，請在系統詢問時按'N'後按'ENTER'即可",
     ]
