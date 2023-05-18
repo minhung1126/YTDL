@@ -306,6 +306,7 @@ class Video:
                 '--no-playlist',
                 '--encoding', 'utf-8',
                 '--concurrent-fragments', '8',
+                '--no-post-overwrites',
                 '-f', gen_format_code(target),
                 # gen_path(target),
                 # '-o', self.HDR_dest_filepath if target['dynamic_range'] != "SDR" else self.SDR_dest_filepath
