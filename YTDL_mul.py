@@ -97,6 +97,8 @@ def watch_clipboard():
     for video in videos:
         video.download()
 
+    print("All parsed videos are downloaded")
+
     return
 
 
