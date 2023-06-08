@@ -44,7 +44,10 @@ class Video:
             self._invalid_msg = str(e)
             with open('./ERROR_MESSAGE.txt', 'w+', encoding="utf-8") as f:
                 f.write(self._invalid_msg + '\n')
+            print(f"Fail download: {self.webpage_url}")
             return
+        else:
+            print(f"Start download: {self.webpage_url}")
 
         # If destdir="", then it will generate '.'
         self.custom_dest_dir = os.path.normpath(dest_dir)
