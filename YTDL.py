@@ -44,7 +44,7 @@ class Video:
             self._invalid_msg = str(e)
             with open('./ERROR_MESSAGE.txt', 'w+', encoding="utf-8") as f:
                 f.write(self._invalid_msg + '\n')
-            print(f"Fail download: {self.webpage_url}")
+            print(f"Fail download: {self._invalid_msg}")
             return
         else:
             print(f"Start download: {self.webpage_url}")
