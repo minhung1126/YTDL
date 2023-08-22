@@ -20,7 +20,7 @@ class Video:
             url (str, optional): _description_. Defaults to "".
             meta_path (str, optional): _description_. Defaults to "".
         """
-        self._VCODECS = ["avc1", "vp9", "av01"]
+        self._VCODECS = ["avc1", "vp09", "vp9", "av01"]
         self._SDR_FILENAME_TEMPLATE = r"%(title)s.%(id)s.%(ext)s"
         self._HDR_FILENAME_TEMPLATE = r"%(title)s.HDR.%(id)s.%(ext)s"
 
