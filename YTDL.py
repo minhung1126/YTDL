@@ -6,6 +6,8 @@ from datetime import datetime
 import sys
 import shutil
 import subprocess
+import colorama
+from colorama import Fore, Style
 
 
 class YTDLError(BaseException):
@@ -209,7 +211,7 @@ class Video:
             ...
 
         else:
-            return os.path.splitext(result.stdout.strip())[0]+".mkv"
+            return os.path.splitext(result.stdout.strip())[0] + ".mkv"
 
     def _get_target_formats(self):
         all_formats = self._meta['formats']
@@ -281,8 +283,8 @@ class Video:
                 os.path.split(self.SDR_dest_filepath)[-1])[0]
             video_filenames = os.listdir(dest_dir)
             if (
-                no_ext_filename+".mkv" in video_filenames and
-                no_ext_filename+".temp.mkv" not in video_filenames
+                no_ext_filename + ".mkv" in video_filenames and
+                no_ext_filename + ".temp.mkv" not in video_filenames
             ):
                 print(f"Video ({self.webpage_url}) is downloaded")
                 os.remove(self._meta_path)
@@ -417,7 +419,7 @@ def self_update():
 
     os.remove(self_update_file_path)
 
-    input('Update done. Press ENTER to close. Restart it manually.')
+    input(Fore.GREEN + 'Update done. Press ENTER to close. Restart it manually.' + Style.RESET_ALL)
 
 
 def download_video_url(url):
