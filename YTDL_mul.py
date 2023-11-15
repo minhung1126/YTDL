@@ -1,6 +1,7 @@
 # ver 1.1
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from colorama import Fore, Style
 
 
 try:
@@ -86,7 +87,7 @@ def watch_clipboard():
     pool.shutdown()
 
     time.sleep(3)
-    print('All url has been parsed')
+    print(Fore.GREEN + 'All url has been parsed' + Style.RESET_ALL)
 
     videos = []
     for process in as_completed(pool_result):
@@ -97,7 +98,7 @@ def watch_clipboard():
     for video in videos:
         video.download()
 
-    print("All parsed videos are downloaded")
+    print(Fore.GREEN + "All parsed videos are downloaded" + Style.RESET_ALL)
 
     return
 
