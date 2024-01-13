@@ -1,7 +1,16 @@
 # ver 1.1
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from colorama import Fore, Style
+
+try:
+    import colorama
+    from colorama import Fore, Style
+except ImportError:
+    import subprocess
+    subprocess.run(['pip', 'install', 'colorama'])
+finally:
+    import colorama
+    from colorama import Fore, Style
 
 
 try:
