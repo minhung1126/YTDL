@@ -6,8 +6,16 @@ from datetime import datetime
 import sys
 import shutil
 import subprocess
-import colorama
-from colorama import Fore, Style
+
+try:
+    import colorama
+    from colorama import Fore, Style
+except ImportError:
+    import subprocess
+    subprocess.run(['pip', 'install', 'colorama'])
+finally:
+    import colorama
+    from colorama import Fore, Style
 
 
 class YTDLError(BaseException):
