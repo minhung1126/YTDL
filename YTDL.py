@@ -54,7 +54,8 @@ class Video:
             self._invalid_msg = str(e)
             with open('./ERROR_MESSAGE.txt', 'w+', encoding="utf-8") as f:
                 f.write(self._invalid_msg + '\n')
-            print(f"Fail download: {self._invalid_msg}")
+            print(
+                Fore.RED + f"Fail download: {self._invalid_msg}" + Style.RESET_ALL)
             return
         else:
             print(f"Start download: {self.webpage_url}")
@@ -417,7 +418,7 @@ def self_update():
     resp = requests.get(f"{base_url}self_update.py")
     if not resp.ok:
         #! Skip
-        print("Fail to download self-update.py")
+        print("Fail to download self_update.py")
 
     self_update_file_path = os.path.join(cwd, "self_update.py")
     with open(self_update_file_path, 'wb') as f:

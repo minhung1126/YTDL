@@ -56,7 +56,10 @@ def parse_and_dl_info(raw_text):
 
     videos = []
     for url in urls:
-        videos.append(YTDL.Video(url=url))
+        if 'youtube.com/playlist?list=' in url:
+            videos.append(YTDL.Playlist(url=url))
+        else:
+            videos.append(YTDL.Video(url=url))
 
     return videos
 
