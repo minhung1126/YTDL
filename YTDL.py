@@ -242,10 +242,21 @@ class Video:
         # Choose target based on vcodec
         targets = []
         for formats in [SDR_formats, HDR_formats]:
+            # Youtube Premium: Higher bit rate is priority
+            premium_formats = list(filter(
+                lambda f: "Premium" in f.get('format_note', ''),
+                formats
+            ))
+
+            if premium_formats:  # Having premium bitrate
+                targets += premium_formats
+                break
+
             vcodecs_to_format_hash = {
                 f.get('vcodec').split('.')[0]: f
                 for f in formats
             }
+
             for vcodec in self._VCODECS:
                 if vcodec in vcodecs_to_format_hash:
                     targets.append(
@@ -330,7 +341,7 @@ class Video:
                 args.extend([
                     '-o',
                     os.path.join(self._dest_dir_template,
-                                 self._SDR_FILENAME_TEMPLATE)
+                                 self._HDR_FILENAME_TEMPLATE)
                 ])
             else:
                 args.extend([
