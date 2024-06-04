@@ -87,13 +87,11 @@ class Video:
         return
 
     def _dl_meta(self, url) -> str:
-        # In Wondows, upper case and lowercase is considered same
-        # To prevent case-problems, add a isotime.
-        # e.g. AAABBBCCC.info.json & AAABBBccc.info.json
         args = [
             'yt-dlp',
             '--encoding', 'utf-8',
-            '--print', fr"./temp/{datetime.now().strftime(r'%Y%m%d%H%M%S%f')}.%(id)s.info.json",
+            '--no-playlist',
+            '--print', fr"./temp/%(id)s.info.json",
             '--print', '%()j',
             url
         ]
