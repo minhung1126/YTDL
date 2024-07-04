@@ -463,7 +463,10 @@ def download_video_meta_dir():
         for filename in filenames:
             meta_path = os.path.join(dirpath, filename)
             if filename.startswith('temp.'):
-                os.remove(meta_path)
+                try:
+                    os.remove(meta_path)
+                except FileNotFoundError:
+                    pass
             else:
                 video = Video(meta_path=meta_path)
                 video.download()
@@ -500,12 +503,17 @@ def main():
     print("=" * 72)
     while True:
         if os.path.isdir("./temp/") and os.listdir("./temp/") != []:
-            resp = input("Continue downloading?(Y/N) ").lower()
-            if resp == "y":
-                download_video_meta_dir()
-            else:
-                shutil.rmtree("./temp/")
-                continue
+            resp = input("Continue downloading or update first?(Y/N) ").lower()
+            
+            match resp:
+                case "y":
+                    download_video_meta_dir()
+                case "n":
+                    shutil.rmtree("./temp/")
+                case "update":
+                    self_update()
+                case _:
+                    print("輸入正確的值")
         else:
             user_input_dispatcher()
 
