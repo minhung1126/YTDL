@@ -20,3 +20,7 @@ Go to `Release` on thr right of the page.
     git clone --recurse-submodules <remote_url>
     git pull --recurse-submodules <branch>
     ```
+
+## Future
+```yt-dlp -S "res,vbr,codec:avc1:vp9:vp09:av01" -f "bv[vcodec^=avc1]+ba[acodec^=mp4a]/bv[vcodec^=vp9]+ba[acodec^=opus]/bv[vcodec^=vp09]+ba[acodec^=opus]/bv[vcodec^=av01]+ba[acodec^=opus]"
+```
