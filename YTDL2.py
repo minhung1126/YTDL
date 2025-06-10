@@ -4,7 +4,12 @@ import subprocess
 import re
 from urllib.parse import urlparse, parse_qs
 
+# Script Configuration
 META_DIR = os.path.join(os.getcwd(), 'meta')
+# yt-dlp Environment
+EXECUTABLE = 'yt-dlp'
+CONCURRENT_FRAGMENTS = "8"
+PROGRESS_BAR_SECONDS = "5"
 
 class Video:
     def __init__(self, meta_filepath: str):
@@ -36,26 +41,49 @@ class Video:
 
     def download(self):
         args = [
-            'yt-dlp', '-f', 'bv+ba'
+            EXECUTABLE,
+            '-f', 'bv+ba',
             '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr',
             '--load-info-json', self.meta_filepath,
+            '--embed-subs',
+            '--sub-langs', 'all,-live_chat',
+            '--embed-thumbnail',
+            '--embed-metadata',
+            '--merge-output-format', 'mkv',
+            '--remux-video', 'mkv',
+            '--encoding', 'utf-8',
+            '--concurrent-fragments', CONCURRENT_FRAGMENTS,
+            '--progress-delta', PROGRESS_BAR_SECONDS,
+            '-o', self.template
         ]
-        subprocess.run(
-            args
+        process = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding='utf-8',
+            errors='ignore'
         )
 
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                break
+
+            print(line.strip())
 
 class Playlist:
     ...
 
 
-def download_from_url(url: str):
+def dl_meta_from_url(url: str):
     args = [
-        'yt-dlp',
+        EXECUTABLE,
         '--no-download',
         '--no-write-playlist-metafiles',
         '-o', os.path.join(META_DIR, f"%(title)s.%(id)s.info.json"),
         '--write-info-json',
+        '--encoding', 'utf-8',
         url
     ]
     parsed = urlparse(url)
@@ -68,7 +96,7 @@ def download_from_url(url: str):
     subprocess.run(args)
 
 
-def load_videos() -> list[Video]:
+def load_videos_from_meta() -> list[Video]:
     videos = (
         Video(os.path.join(META_DIR, filename))
         for filename in os.listdir(META_DIR)
@@ -83,12 +111,12 @@ def parse_user_action():
         ...
 
     resp = input("URL: ")
-    download_from_url(resp)
+    dl_meta_from_url(resp)
 
 
 def main():
     parse_user_action()
-    videos = load_videos()
+    videos = load_videos_from_meta()
     for vid in videos:
         vid.download()
     # Video("https://www.youtube.com/watch?v=YTO65C2Brg4").download()
