@@ -9,7 +9,7 @@ META_DIR = os.path.join(os.getcwd(), 'meta')
 # yt-dlp Environment
 EXECUTABLE = 'yt-dlp'
 CONCURRENT_FRAGMENTS = "8"
-PROGRESS_BAR_SECONDS = "5"
+PROGRESS_BAR_SECONDS = "2"
 
 class Video:
     def __init__(self, meta_filepath: str):
