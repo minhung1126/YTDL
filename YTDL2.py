@@ -72,6 +72,20 @@ class Video:
 
             print(line.strip())
 
+        process.wait()
+
+        if process.returncode != 0:
+            ...
+            return
+
+        try:
+            os.remove(self.meta_filepath)
+        except:
+            ...
+
+        return
+
+
 class Playlist:
     ...
 
