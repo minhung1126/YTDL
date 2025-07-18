@@ -1,5 +1,6 @@
 import os
 import json
+import shutil
 import subprocess
 import re
 from urllib.parse import urlparse, parse_qs
@@ -119,12 +120,55 @@ def load_videos_from_meta() -> list[Video]:
     return videos
 
 
+def self_update():
+    try:
+        import requests
+    except:
+        subprocess.run(["pip", "install", "requests"])
+        import requests
+
+    cwd = os.getcwd()
+
+    # Download the update file
+    base_url = "https://raw.githubusercontent.com/minhung1126/YTDL/main/"
+
+    # Self update python file
+    resp = requests.get(f"{base_url}self_update.py")
+    if not resp.ok:
+        #! Skip
+        print("Fail to download self_update.py")
+
+    self_update_file_path = os.path.join(cwd, "self_update.py")
+    with open(self_update_file_path, 'wb') as f:
+        f.write(resp.content)
+
+    subprocess.run(["python", "self_update.py"], cwd=os.getcwd())
+
+    os.remove(self_update_file_path)
+
+    input('Update done. Press ENTER to close. Restart it manually.')
+
+
 def parse_user_action():
     if os.path.isdir(META_DIR):
         # Ask if resume download
-        ...
+        resp = input("Continue downloading?(Y/N) ").lower()
+        if resp == 'y':
+            videos = load_videos_from_meta()
+            for v in videos:
+                v.download()
+        elif resp == 'n':
+            # Clear meta directory
+            shutil.rmtree(META_DIR)
+        else:
+            print("Invalid input. Exiting.")
+            return parse_user_action()
+
 
     resp = input("URL: ")
+    if resp == "update":
+        self_update()
+
     dl_meta_from_url(resp)
 
 
