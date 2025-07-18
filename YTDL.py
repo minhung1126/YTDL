@@ -165,18 +165,30 @@ def parse_user_action():
             return parse_user_action()
 
 
-    resp = input("URL: ")
+    resp = input("URL (type `update` to update): ")
     if resp == "update":
         self_update()
 
     dl_meta_from_url(resp)
 
 
+def cleanup():
+    if os.path.isdir(META_DIR):
+        shutil.rmtree(META_DIR)
+
+    return
+
 def main():
     parse_user_action()
+
     videos = load_videos_from_meta()
+
     for vid in videos:
         vid.download()
+
+    cleanup()
+    return main()
+
     # Video("https://www.youtube.com/watch?v=YTO65C2Brg4").download()
     # Video("https://www.youtube.com/watch?v=2n0OS1R0JFc").download()
 
