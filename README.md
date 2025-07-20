@@ -1,7 +1,11 @@
 # YTDL
+使用yt-dlp自動下載最好解析度和編碼格式的YouTube影片。
+
 Download youtube videos with the best resolution and vcodec.
 
 ## Download
+右方點擊`Release`，下載`zip`檔。解壓縮後保留`YTDL.py`和`YTDL_mul.py`即可。
+
 Go to `Release` on thr right of the page.
 
 ## Deploy as submodules
