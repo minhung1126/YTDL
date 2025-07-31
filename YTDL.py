@@ -21,7 +21,10 @@ class Video:
         self.meta = self._read_meta()
         self.template = PLAYLIST_TEMPLATE if self.meta and 'playlist' in self.meta else VIDEO_TEMPLATE
 
-        self.logs = ""
+        # self.logs = ""
+        self.url = self.meta.get("webpage_url")
+        if self.meta.get("playlist_id"):
+            self.url += f"&list={self.meta.get('playlist_id')}"
 
     def _read_meta(self):
         try:
@@ -45,7 +48,7 @@ class Video:
             EXECUTABLE,
             '-f', 'bv+ba',
             '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr',
-            '--load-info-json', self.meta_filepath,
+            # '--load-info-json', self.meta_filepath,
             '--embed-subs',
             '--sub-langs', 'all,-live_chat',
             '--embed-thumbnail',
@@ -55,8 +58,10 @@ class Video:
             '--encoding', 'utf-8',
             '--concurrent-fragments', CONCURRENT_FRAGMENTS,
             '--progress-delta', PROGRESS_BAR_SECONDS,
-            '-o', self.template
+            '-o', self.template,
+            self.url
         ]
+
         process = subprocess.Popen(
             args,
             stdout=subprocess.PIPE,
@@ -96,7 +101,7 @@ def dl_meta_from_url(url: str):
         EXECUTABLE,
         '--no-download',
         '--no-write-playlist-metafiles',
-        '-o', os.path.join(META_DIR, f"%(title)s.%(id)s.info.json"),
+        '-o', os.path.join(META_DIR, f"%(title)s.%(id)s"),
         '--write-info-json',
         '--encoding', 'utf-8',
         url
