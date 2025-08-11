@@ -1,23 +1,26 @@
 # ver 1.1
 import time
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-try:
-    import colorama
-    from colorama import Fore, Style
-except ImportError:
-    import subprocess
-    subprocess.run(['pip', 'install', 'colorama'])
-finally:
-    import colorama
-    from colorama import Fore, Style
+# try:
+#     import colorama
+#     from colorama import Fore, Style
+# except ImportError:
+#     import subprocess
+#     subprocess.run(['pip', 'install', 'colorama'])
+# finally:
+#     import colorama
+#     from colorama import Fore, Style
 
 
 try:
     import pyperclip
 except:
-    import os
-    os.system("pip install pyperclip")
+    import subprocess
+    subprocess.run(['pip', 'install', 'pyperclip'])
+finally:
+    import pyperclip
 
 try:
     # Dont generate __pycache__
@@ -54,19 +57,20 @@ def parse_and_dl_info(raw_text):
             if url not in urls:
                 urls.append(url)
 
-    videos = []
+    # videos = []
+    # for url in urls:
+    #     if 'youtube.com/playlist?list=' in url:
+    #         videos.append(YTDL.Playlist(url=url))
+    #     else:
+    #         videos.append(YTDL.Video(url=url))
     for url in urls:
-        if 'youtube.com/playlist?list=' in url:
-            videos.append(YTDL.Playlist(url=url))
-        else:
-            videos.append(YTDL.Video(url=url))
+        YTDL.dl_meta_from_url(url)
 
-    return videos
+    # return videos
+    return None
 
 
 def watch_clipboard():
-    pool = ThreadPoolExecutor()
-
     try:
         pyperclip.copy("")
     except pyperclip.PyperclipWindowsException:
@@ -87,7 +91,7 @@ def watch_clipboard():
             raw = pyperclip.paste()
             # print(raw)
             if raw != old_raw:
-                print(f"Text detected: {raw[:36]}...")
+                print(f"Text detected: {raw[:50]}...")
                 # result.append(pool.submit(parse_and_dl_info, raw))
                 to_parse.append(raw)
                 # parse_and_dl_info(raw)
@@ -95,22 +99,23 @@ def watch_clipboard():
     except KeyboardInterrupt:
         print('End Watching, start download')
 
-    pool_result = [pool.submit(parse_and_dl_info, p) for p in to_parse]
-    pool.shutdown()
+    with ThreadPoolExecutor() as pool:
+        pool_result = [pool.submit(parse_and_dl_info, p) for p in to_parse]
+        pool.shutdown()
 
     time.sleep(3)
-    print(Fore.GREEN + 'All url has been parsed' + Style.RESET_ALL)
+    print('All url has been parsed')
 
-    videos = []
-    for process in as_completed(pool_result):
-        video_list = process.result()
+    # videos = []
+    # for process in as_completed(pool_result):
+    #     video_list = process.result()
 
-        videos += video_list
+        # videos += video_list
 
-    for video in videos:
+    for video in YTDL.load_videos_from_meta():
         video.download()
 
-    print(Fore.GREEN + "All parsed videos are downloaded" + Style.RESET_ALL)
+    print("All parsed videos are downloaded")
 
     return
 
