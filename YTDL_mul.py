@@ -57,16 +57,9 @@ def parse_and_dl_info(raw_text):
             if url not in urls:
                 urls.append(url)
 
-    # videos = []
-    # for url in urls:
-    #     if 'youtube.com/playlist?list=' in url:
-    #         videos.append(YTDL.Playlist(url=url))
-    #     else:
-    #         videos.append(YTDL.Video(url=url))
     for url in urls:
         YTDL.dl_meta_from_url(url)
 
-    # return videos
     return None
 
 
