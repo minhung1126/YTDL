@@ -79,7 +79,7 @@ def program_files_update():
     os.remove('ytdlp_version_info.py')
 
     print("==================================================")
-    print("如果發生任何錯誤，請截圖此CMD視窗並連絡開發者。\n"
+    print("如果發生任何錯誤，請截圖此CMD視窗並連絡開發者.\n" 
           "If any error occured, please screenshot this cmd and contact the developer.")
     print("==================================================")
     return
@@ -87,6 +87,21 @@ def program_files_update():
 
 def main():
     program_files_update()
+
+    # --- Restart Logic ---
+    print("Update complete. Restarting application...")
+
+    # Check if the calling script path was passed as an argument
+    if len(sys.argv) > 1:
+        # sys.argv[1] will be the full path to YTDL.py or YTDL_mul.py
+        caller_script_path = sys.argv[1]
+        
+        # Relaunch the script that initiated the update
+        os.execv(sys.executable, ['python', caller_script_path])
+    else:
+        # Fallback message if the script path wasn't passed for some reason
+        print("Could not determine which script to restart. Please start it manually.")
+        input("Press ENTER to exit.")
 
 
 if __name__ == "__main__":
