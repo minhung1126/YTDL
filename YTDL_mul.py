@@ -1,122 +1,192 @@
-# ver 1.1
-import time
-import os
-from concurrent.futures import ThreadPoolExecutor
 import sys
+import time
 import traceback
+import threading
+import tkinter as tk
+from tkinter import ttk, scrolledtext, messagebox
 
-# Make sure YTDL is imported to access its functions
-import YTDL
+import YTDL  # Import the core logic
 
 try:
     import pyperclip
 except ImportError:
     YTDL.report_error("Pyperclip library is not installed. Please run 'pip install pyperclip'.")
-    input("Press ENTER to exit.")
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror("依賴錯誤 | Dependency Error", "Pyperclip 函式庫未安裝.\n請在終端機執行 'pip install pyperclip'.")
     sys.exit(1)
 
-try:
-    sys.dont_write_bytecode = True
-except (ImportError, AttributeError):
-    pass
+# --- UI Text Dictionary ---
+UI_TEXT = {
+    "window_title": "剪貼簿監控下載器 | YTDL Clipboard Watcher",
+    "detected_urls": "偵測到的網址 | Detected URLs",
+    "start_watching": "開始監控 | Start Watching",
+    "stop_watching": "停止監控 | Stop Watching",
+    "download_all": "全部下載 | Download All",
+    "status_ready": "就緒。請點擊「開始監控」。 | Ready. Click 'Start Watching' to begin.",
+    "status_stopped": "已停止。請點擊「開始監控」以繼續。 | Stopped. Click 'Start Watching' to resume.",
+    "status_watching": "正在監控剪貼簿... | Watching clipboard for YouTube URLs...",
+    "status_starting_download": "開始下載流程... | Starting download process...",
+    "status_processing_meta": "正在處理 {count} 個網址的元數據... | Processing {count} URLs for metadata...",
+    "status_meta_done": "元數據處理完畢，開始下載... | Metadata processed. Starting downloads...",
+    "status_downloading": "正在下載 ({i}/{total}): {title}... | Downloading ({i}/{total}): {title}...",
+    "status_all_done": "所有下載已完成！可開始新一輪任務。 | All downloads complete! Ready for next session.",
+    "status_error": "發生錯誤，請檢查日誌。 | An error occurred. Check logs.",
+    "status_clipboard_error": "錯誤：無法存取剪貼簿。 | Error: Could not access clipboard.",
+    "msg_download_in_progress_title": "下載進行中 | Download In Progress",
+    "msg_download_in_progress_body": "一個下載任務正在執行中。 | A download process is already running.",
+    "msg_no_urls_title": "沒有網址 | No URLs",
+    "msg_no_urls_body": "尚未偵測到任何網址。 | No URLs have been detected yet.",
+    "msg_quit_title": "退出 | Quit",
+    "msg_quit_body": "下載正在進行中，您確定要退出嗎？ | A download is in progress. Are you sure you want to quit?",
+    "msg_fatal_error_title": "嚴重錯誤 | Fatal Error",
+    "msg_fatal_error_body": "啟動時發生嚴重錯誤，請檢查日誌。 | A critical error occurred on startup. Please check the logs."
+}
 
-def parse_and_dl_info(raw_text):
-    context = {"Input Text": raw_text[:1000]} # Provide the text being parsed as context
-    try:
-        DOMAINS = [
-            'youtube.com/watch?v=',
-            'youtu.be/',
-            'youtube.com/playlist?list=',
-            'youtube.com/shorts/'
-        ]
-        IDLENGTH = {
-            'youtube.com/watch?v=': 11,
-            'youtu.be/': 11,
-            'youtube.com/playlist?list=': 34,
-            'youtube.com/shorts/': 11
-        }
+class ClipboardWatcherApp:
+    def __init__(self, master):
+        self.master = master
+        master.title(UI_TEXT["window_title"])
+        master.geometry("650x450")
+        master.resizable(False, False)
 
-        urls = []
-        for DOMAIN in DOMAINS:
-            while DOMAIN in raw_text:
-                url = f"https://{DOMAIN}{raw_text[raw_text.find(DOMAIN)+len(DOMAIN): raw_text.find(DOMAIN)+len(DOMAIN)+IDLENGTH[DOMAIN]]}"
-                raw_text = raw_text.replace(
-                    f"{DOMAIN}{raw_text[raw_text.find(DOMAIN)+len(DOMAIN): raw_text.find(DOMAIN)+len(DOMAIN)+IDLENGTH[DOMAIN]]}", "")
-                print(f"URL Parsed: {url}")
-                if url not in urls:
-                    urls.append(url)
+        self.is_watching = False
+        self.detected_urls = set()
+        self.clipboard_after_id = None
+        self.download_thread = None
 
-        for url in urls:
-            YTDL.dl_meta_from_url(url)
-    except Exception:
-        YTDL.report_error("Failed during URL parsing and metadata download.", context={"Traceback": traceback.format_exc(), **context})
+        self.setup_widgets()
+        self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+    def setup_widgets(self):
+        main_frame = ttk.Frame(self.master, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-def watch_clipboard():
-    try:
-        pyperclip.copy("")
-    except pyperclip.PyperclipWindowsException:
-        YTDL.report_error(f"Could not access the clipboard.\n{traceback.format_exc()}")
-        print("Restarting clipboard watch in 5 seconds...")
-        time.sleep(5)
-        return
+        url_frame = ttk.LabelFrame(main_frame, text=UI_TEXT["detected_urls"])
+        url_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
-    old_raw = ""
-    to_parse = []
-    print("Watching clipboard for YouTube URLs. Press Ctrl+C to stop watching and start downloading.")
-    try:
-        while True:
-            raw = pyperclip.paste()
-            if raw and raw != old_raw:
-                print(f"Text detected: {raw[:70]}...")
-                to_parse.append(raw)
-                old_raw = raw
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        print('\nStopped watching clipboard. Starting download process...')
+        self.url_text = scrolledtext.ScrolledText(url_frame, wrap=tk.WORD, height=15)
+        self.url_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.url_text.config(state=tk.DISABLED)
 
-    if not to_parse:
-        print("No new URLs were detected.")
-        return
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=5)
 
-    with ThreadPoolExecutor() as pool:
-        list(pool.map(parse_and_dl_info, to_parse))
+        self.watch_button = ttk.Button(button_frame, text=UI_TEXT["start_watching"], command=self.toggle_watching)
+        self.watch_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
 
-    print('All URLs have been processed.')
+        self.download_button = ttk.Button(button_frame, text=UI_TEXT["download_all"], command=self.start_download)
+        self.download_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
 
-    videos_to_download = YTDL.load_videos_from_meta()
-    if not videos_to_download:
-        print("No videos found to download.")
-        return
+        self.status_var = tk.StringVar()
+        self.status_var.set(UI_TEXT["status_ready"])
+        status_bar = ttk.Label(self.master, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W, padding="2 5")
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-    for video in videos_to_download:
-        video.download()
+    def toggle_watching(self):
+        if self.is_watching:
+            self.is_watching = False
+            if self.clipboard_after_id:
+                self.master.after_cancel(self.clipboard_after_id)
+            self.watch_button.config(text=UI_TEXT["start_watching"])
+            self.status_var.set(UI_TEXT["status_stopped"])
+        else:
+            self.is_watching = True
+            self.watch_button.config(text=UI_TEXT["stop_watching"])
+            self.status_var.set(UI_TEXT["status_watching"])
+            self.poll_clipboard()
 
-    print("All parsed videos are downloaded.")
-    YTDL.cleanup()
+    def poll_clipboard(self):
+        if not self.is_watching: return
+        try:
+            current_clipboard = pyperclip.paste()
+            if current_clipboard:
+                import re
+                found_urls = re.findall(r'https?://(?:www\.)?(?:youtube\.com/|youtu\.be/)[\w\-?=&]+', current_clipboard)
+                for url in found_urls:
+                    if url not in self.detected_urls:
+                        self.detected_urls.add(url)
+                        self.update_url_display(url)
+        except Exception:
+            self.toggle_watching()
+            YTDL.report_error(f"Failed to access clipboard.\n{traceback.format_exc()}")
+            self.status_var.set(UI_TEXT["status_clipboard_error"])
+        self.clipboard_after_id = self.master.after(1000, self.poll_clipboard)
 
+    def update_url_display(self, text):
+        self.url_text.config(state=tk.NORMAL)
+        self.url_text.insert(tk.END, text + "\n")
+        self.url_text.see(tk.END)
+        self.url_text.config(state=tk.DISABLED)
 
-def main():
-    try:
-        YTDL.check_for_updates(sys.argv[0])
-        explanation = [
-            "這個程式可以自動分析文字中的YouTube網址並下載",
-            "使用方式為：開啟程式後再複製文字",
-            "若要開始下載，點一下本程式視窗後，按下ctrl+C",
-            "可以分多次複製",
-            "若分析完畢後關閉程式，請直接開啟YTDL.py並依指示繼續下載",
-            "若尚未分析完畢而關閉程式，則要重新分析",
-        ]
-        print("\n".join(f"{explanation.index(e)+1}. {e}" for e in explanation))
-        print("=" * 72)
-        while True:
-            watch_clipboard()
-            print("\nReturning to clipboard watch mode. Press Ctrl+C again to exit, or copy new links.")
-    except SystemExit:
-        pass
-    except Exception:
-        YTDL.report_error(f"A critical error occurred in YTDL_mul.", context={"Traceback": traceback.format_exc()})
-        input("Press ENTER to exit.")
+    def start_download(self):
+        if self.download_thread and self.download_thread.is_alive():
+            messagebox.showwarning(UI_TEXT["msg_download_in_progress_title"], UI_TEXT["msg_download_in_progress_body"])
+            return
+        if not self.detected_urls:
+            messagebox.showinfo(UI_TEXT["msg_no_urls_title"], UI_TEXT["msg_no_urls_body"])
+            return
+
+        self.watch_button.config(state=tk.DISABLED)
+        self.download_button.config(state=tk.DISABLED)
+        self.status_var.set(UI_TEXT["status_starting_download"])
+
+        urls_to_download = list(self.detected_urls)
+        self.detected_urls.clear()
+        self.url_text.config(state=tk.NORMAL)
+        self.url_text.delete(1.0, tk.END)
+        self.url_text.config(state=tk.DISABLED)
+
+        self.download_thread = threading.Thread(target=self._download_worker, args=(urls_to_download,), daemon=True)
+        self.download_thread.start()
+        self._check_download_thread()
+
+    def _download_worker(self, urls):
+        try:
+            self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_processing_meta"].format(count=len(urls))))
+            for url in urls:
+                YTDL.dl_meta_from_url(url)
+            
+            self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_meta_done"]))
+            videos_to_download = YTDL.load_videos_from_meta()
+            total_videos = len(videos_to_download)
+            for i, video in enumerate(videos_to_download):
+                title = video.meta.get('title', 'N/A')[:25]
+                self.master.after(0, lambda i=i, t=title: self.status_var.set(UI_TEXT["status_downloading"].format(i=i+1, total=total_videos, title=t)))
+                video.download()
+            
+            YTDL.cleanup()
+            self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_all_done"]))
+        except Exception:
+            error_message = "A critical error occurred during the download process."
+            self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_error"]))
+            YTDL.report_error(error_message, context={"Traceback": traceback.format_exc()})
+
+    def _check_download_thread(self):
+        if self.download_thread.is_alive():
+            self.master.after(100, self._check_download_thread)
+        else:
+            self.watch_button.config(state=tk.NORMAL)
+            self.download_button.config(state=tk.NORMAL)
+
+    def on_closing(self):
+        if self.download_thread and self.download_thread.is_alive():
+            if messagebox.askokcancel(UI_TEXT["msg_quit_title"], UI_TEXT["msg_quit_body"]):
+                self.master.destroy()
+        else:
+            self.master.destroy()
 
 if __name__ == "__main__":
-    main()
+    try:
+        YTDL.check_for_updates(sys.argv[0])
+        root = tk.Tk()
+        app = ClipboardWatcherApp(root)
+        root.mainloop()
+    except Exception:
+        YTDL.report_error("A critical error occurred on startup.", context={"Traceback": traceback.format_exc()})
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(UI_TEXT["msg_fatal_error_title"], UI_TEXT["msg_fatal_error_body"])
+        finally:
+            sys.exit(1)
