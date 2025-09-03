@@ -113,6 +113,9 @@ def watch_clipboard():
 
 
 def main():
+    # On start, check for updates
+    YTDL.check_for_updates(sys.argv[0])
+
     explanation = [
         "這個程式可以自動分析文字中的YouTube網址並下載",
         "使用方式為：開啟程式後再複製文字",
