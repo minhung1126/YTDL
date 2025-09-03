@@ -22,12 +22,14 @@ jobs:
       - name: "Extract version from YTDL.py"
         id: version_extractor
         run: |
-          # Find the line with __version__, split by " and take the second part
-          VERSION=$(grep '__version__' YTDL.py | cut -d '"' -f 2)
+          # Find the line starting with __version__ to ignore commented lines
+          VERSION=$(grep '^__version__' YTDL.py | cut -d '"' -f 2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
         
       # Step 3: Create the new release using the extracted version
       - name: "Create Release"
+        # Only run this step if the version is not 'dev'
+        if: steps.version_extractor.outputs.version != 'dev'
         uses: "marvinpinto/action-automatic-releases@latest"
         with:
           # GitHub Token for authorization
