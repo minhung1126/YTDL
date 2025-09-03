@@ -1,9 +1,11 @@
 name: "Auto Release"
 
 on:
+  # Only trigger on push to the main branch
   push:
     branches:
       - "main"
+  # Allow manual trigger
   workflow_dispatch:
 
 jobs:
@@ -12,16 +14,27 @@ jobs:
     runs-on: "ubuntu-latest"
 
     steps:
-      - name: "Get current date"
-        id: date
-        # run: echo "::set-output name=date::$(date +'%Y.%m.%d')"
-        run: echo "date=$(date +'%Y.%m.%d')" >> $GITHUB_OUTPUT
+      # Step 1: Checkout the repository code
+      - name: "Checkout code"
+        uses: actions/checkout@v4
 
-      - name: "Release"
-        run: echo "Start"
-
-      - uses: "marvinpinto/action-automatic-releases@latest"
+      # Step 2: Extract the __version__ from YTDL.py
+      - name: "Extract version from YTDL.py"
+        id: version_extractor
+        run: |
+          # Find the line with __version__, split by " and take the second part
+          VERSION=$(grep '__version__' YTDL.py | cut -d '"' -f 2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+      # Step 3: Create the new release using the extracted version
+      - name: "Create Release"
+        uses: "marvinpinto/action-automatic-releases@latest"
         with:
-          repo_token: ${{ secrets.GH_TOKEN }}
+          # GitHub Token for authorization
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          # This is not a pre-release
           prerelease: false
-          automatic_release_tag: v${{ steps.date.outputs.date }}
+          # Use the output from the 'version_extractor' step as the release tag
+          automatic_release_tag: ${{ steps.version_extractor.outputs.version }}
+          # (Optional) Set a title for the release
+          title: "Release ${{ steps.version_extractor.outputs.version }}"

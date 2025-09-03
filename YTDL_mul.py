@@ -32,7 +32,6 @@ except:
 
 import YTDL
 
-
 def parse_and_dl_info(raw_text):
     DOMAINS = [
         'youtube.com/watch?v=',
