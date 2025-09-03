@@ -1,108 +1,114 @@
 import os
 import io
 import subprocess
-
+import sys
+import traceback
+import platform
+import socket
 from zipfile import ZipFile
-import requests
 
 try:
-    # Dont generate __pycache__
-    # Use try to force not format the sequence of import
-    import sys
+    import requests
+except ImportError:
+    print("[FATAL] requests library not found. Cannot proceed with update.", file=sys.stderr)
+    sys.exit(1)
+
+try:
     sys.dont_write_bytecode = True
-except:
-    ...
+except (ImportError, AttributeError):
+    pass
 
+def report_error_updater(message: str, webhook_url: str):
+    """
+    A self-contained error reporter for the updater script.
+    Prints the error and sends it to a Discord webhook if configured.
+    """
+    try:
+        user = os.getlogin()
+    except OSError:
+        user = os.environ.get("USERNAME", "N/A")
+    computer_info = f"**Computer:** `{socket.gethostname()}` (`{user}`) | **OS:** `{platform.system()} {platform.release()}`"
 
-def program_files_update():
-    cwd = os.getcwd()
-    api_url = "https://api.github.com/repos/minhung1126/YTDL"
+    print(f"[ERROR] An error occurred during update:\n{computer_info}\n{message}", file=sys.stderr)
+    
+    if webhook_url:
+        try:
+            payload = {"content": f"🚨 **YTDL Updater Error:**\n{computer_info}\n**Error:**\n```\n{message[:1600]}\n```"}
+            requests.post(webhook_url, json=payload, timeout=10)
+        except Exception as e:
+            print(f"[CRITICAL] Failed to send updater error report to Discord: {e}", file=sys.stderr)
 
-    resp = requests.get(f"{api_url}/releases/latest")
-    if not resp.ok:
-        #! Fail
-        print("Fail to download release_data")
-        return
-    else:
-        print("Download the info successfully")
+def program_files_update(webhook_url: str):
+    try:
+        cwd = os.getcwd()
+        api_url = "https://api.github.com/repos/minhung1126/YTDL"
 
-    release_data = resp.json()
-    zipfile_url = release_data['zipball_url']
-    print(f'Release zip url: {zipfile_url}')
+        print("Fetching latest release information...")
+        resp = requests.get(f"{api_url}/releases/latest", timeout=10)
+        resp.raise_for_status()
+        release_data = resp.json()
+        zipfile_url = release_data['zipball_url']
+        print(f'Release zip url: {zipfile_url}')
 
-    zipfile_content_resp = requests.get(zipfile_url)
-    if not zipfile_content_resp.ok:
-        #! Fail
-        print("Fail to download zipfile of the latest release code")
-        return
-    else:
-        print("Download the zipfile successfully")
+        print("Downloading latest release zip...")
+        zipfile_content_resp = requests.get(zipfile_url, timeout=30)
+        zipfile_content_resp.raise_for_status()
+        zipfile_content = io.BytesIO(zipfile_content_resp.content)
 
-    zipfile_content = io.BytesIO(zipfile_content_resp.content)
+        must_extract_filenames = ['ytdlp_version_info.py']
+        to_extract_filenames = ["YTDL.py", "YTDL_mul.py"]
+        
+        final_extract_list = [f for f in to_extract_filenames if os.path.exists(os.path.join(cwd, f))] + must_extract_filenames
 
-    must_extract_filenames = [
-        'ytdlp_version_info.py'
-    ]
-    # Replace only if originally exists
-    to_extract_filenames = [
-        "YTDL.py", "YTDL_mul.py",
-    ]
-    for filename in to_extract_filenames:
-        if filename not in os.listdir(cwd):
-            to_extract_filenames.remove(filename)
+        print("Extracting files...")
+        with ZipFile(zipfile_content, 'r') as zipfile:
+            for filepath in zipfile.namelist():
+                filename = os.path.split(filepath)[-1]
+                if filename in final_extract_list:
+                    print(f"  - Extracting {filename}...")
+                    file_content = zipfile.read(filepath)
+                    with open(os.path.join(cwd, filename), 'wb') as f:
+                        f.write(file_content)
 
-    to_extract_filenames += must_extract_filenames
+        from ytdlp_version_info import YT_DLP_VERSION_CHANNEL, YT_DLP_VERSION_TAG
+        print(f"Updating yt-dlp to {YT_DLP_VERSION_CHANNEL}@{YT_DLP_VERSION_TAG}...")
+        subprocess.run(['yt-dlp', '--update-to', f'{YT_DLP_VERSION_CHANNEL}@{YT_DLP_VERSION_TAG}'], check=True)
 
-    with ZipFile(zipfile_content, 'r') as zipfile:
-        for filepath in zipfile.namelist():
-            print(filepath, end='')
-            filename = os.path.split(filepath)[-1]
-            if filename in to_extract_filenames:
-                file_content = zipfile.read(filepath)
-                with open(os.path.join(cwd, filename), 'wb') as f:
-                    f.write(file_content)
-                print(" ...Extracted")
-            else:
-                print(" ...Skipped")
+        os.remove('ytdlp_version_info.py')
 
-    # Update yt-dlp.exe
-    from ytdlp_version_info import (
-        YT_DLP_VERSION_CHANNEL,
-        YT_DLP_VERSION_TAG
-    )
-    print(
-        f"yt-dlp.exe: Channel:{YT_DLP_VERSION_CHANNEL}; Tag: {YT_DLP_VERSION_TAG}")
-    subprocess.run([
-        'yt-dlp', '--update-to', f'{YT_DLP_VERSION_CHANNEL}@{YT_DLP_VERSION_TAG}',
-    ])
+        print("==================================================")
+        print("Update process completed successfully.")
+        print("==================================================")
+        return True
 
-    os.remove('ytdlp_version_info.py')
-
-    print("==================================================")
-    print("如果發生任何錯誤，請截圖此CMD視窗並連絡開發者.\n" 
-          "If any error occured, please screenshot this cmd and contact the developer.")
-    print("==================================================")
-    return
-
+    except Exception:
+        error_message = f"An error occurred in program_files_update.\n{traceback.format_exc()}"
+        report_error_updater(error_message, webhook_url)
+        return False
 
 def main():
-    program_files_update()
+    caller_script_path = sys.argv[1] if len(sys.argv) > 1 else None
+    webhook_url = sys.argv[2] if len(sys.argv) > 2 else ""
 
-    # --- Restart Logic ---
-    print("Update complete. Restarting application...")
+    update_succeeded = program_files_update(webhook_url)
 
-    # Check if the calling script path was passed as an argument
-    if len(sys.argv) > 1:
-        # sys.argv[1] will be the full path to YTDL.py or YTDL_mul.py
-        caller_script_path = sys.argv[1]
-        
-        # Relaunch the script that initiated the update
-        os.execv(sys.executable, ['python', caller_script_path])
-    else:
-        # Fallback message if the script path wasn't passed for some reason
-        print("Could not determine which script to restart. Please start it manually.")
+    if not update_succeeded:
+        print("Update failed. The application will not be restarted.")
         input("Press ENTER to exit.")
+        sys.exit(1)
 
+    print("Update complete. Restarting application...")
+    if caller_script_path and os.path.exists(caller_script_path):
+        try:
+            os.execv(sys.executable, ['python', caller_script_path])
+        except Exception:
+            error_message = f"Failed to restart the application at {caller_script_path}.\n{traceback.format_exc()}"
+            report_error_updater(error_message, webhook_url)
+            input("Press ENTER to exit.")
+    else:
+        error_message = f"Could not restart application: Invalid path provided ('{caller_script_path}')."
+        report_error_updater(error_message, webhook_url)
+        input("Press ENTER to exit.")
 
 if __name__ == "__main__":
     main()
