@@ -13,6 +13,10 @@ jobs:
     name: "Auto Release"
     runs-on: "ubuntu-latest"
 
+    # Grant the GITHUB_TOKEN write permission to create a release
+    permissions:
+      contents: write
+
     steps:
       # Step 1: Checkout the repository code
       - name: "Checkout code"
