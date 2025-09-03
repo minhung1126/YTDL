@@ -15,7 +15,6 @@ except ImportError:
 # Set to "dev" to disable update checks during development.
 # Otherwise, set to the release version, e.g., "v2025.09.04".
 __version__ = "v2025.09.03"
-# __version__ = "dev"
 #! ---------------------
 
 META_DIR = os.path.join(os.getcwd(), 'meta')
