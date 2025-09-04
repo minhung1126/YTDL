@@ -16,7 +16,7 @@
 ## 如何下載
 
 1.  前往本專案的 [**Releases**](https://github.com/minhung1126/YTDL/releases) 頁面。
-2.  在最新版本的 "Assets" 區塊中，找到並下載 `主程式 Main Code.zip`。
+2.  在最新版本的 "Assets" 區塊中，找到並下載 `YTDL-Release.zip`。
 3.  解壓縮後，您會得到 `YTDL.py` 和 `YTDL_mul.py` 兩個檔案。
 
 ## 事前準備
