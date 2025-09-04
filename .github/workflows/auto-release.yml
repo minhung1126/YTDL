@@ -34,6 +34,8 @@ jobs:
       - name: "Package files into a zip"
         if: steps.version_extractor.outputs.version != 'dev'
         run: zip "主程式 Main Code.zip" YTDL.py YTDL_mul.py
+        env:
+          LANG: C.UTF-8
 
       # Step 4: Create the new release using the extracted version
       - name: "Create Release"
