@@ -1,38 +1,63 @@
-# YTDL
-Download youtube videos with the best resolution and vcodec.
+# YTDL - YouTube 影片下載工具
 
-## Download
-Go to `Release` on thr right of the page.
+一個強大且易用的 YouTube 影片下載工具，提供命令列與圖形介面兩種模式，滿足您不同的下載需求。
 
-## Deploy as submodules
-1. Add this repo as a submodules.
-    ```git
-    git submodule add https://github.com/minhung1126/YTDL YTDL
+## 主要功能
+
+-   **最高畫質**: 自動分析並下載合併為最佳畫質的影片 (最高支援 8K HDR)。
+-   **兩種模式**:
+    -   **命令列模式 (`YTDL.py`)**: 適合下載單一影片或整個播放清單。
+    -   **圖形介面模式 (`YTDL_mul.py`)**: 自動監控剪貼簿，方便快速批次下載多個影片。
+-   **智慧功能**:
+    -   **自動更新**: 程式啟動時自動檢查並更新到最新版本。
+    -   **依賴自動安裝**: 首次執行時自動安裝所需套件，開箱即用。
+    -   **斷點續傳**: 若上次下載中斷，下次啟動時會詢問是否繼續。
+
+## 如何下載
+
+1.  前往本專案的 [**Releases**](https://github.com/minhung1126/YTDL/releases) 頁面。
+2.  在最新版本的 "Assets" 區塊中，找到並下載 `主程式 Main Code.zip`。
+3.  解壓縮後，您會得到 `YTDL.py` 和 `YTDL_mul.py` 兩個檔案。
+
+## 事前準備
+
+1.  **安裝 Python**: 請先確保您的電腦已安裝 [Python](https://www.python.org/downloads/) (建議版本 3.6 或以上)。
+2.  **安裝 yt-dlp**: 本工具依賴 `yt-dlp` 來執行下載。請參考 [官方指南](https://github.com/yt-dlp/yt-dlp#installation) 進行安裝。最簡單的方式是透過 `pip`:
+    ```bash
+    pip install -U yt-dlp
     ```
-2. Push to remote
-    ```git
-    git add .
-    git commit -m "Add a submodule"
-    git push
+
+## 如何使用
+
+### YTDL.py (命令列模式 - 單檔/播放清單下載)
+
+此模式適合您想要下載特定一個影片或整個播放清單的場合。
+
+1.  打開您的終端機 (例如: Command Prompt, PowerShell, Terminal)。
+2.  使用 `cd` 指令切換到 `YTDL.py` 所在的資料夾。
+3.  執行程式:
+    ```bash
+    python YTDL.py
     ```
-3. After on, once you want to clone or update, use the following command to deal with both the repo and submodules
-    ```git
-    git clone --recurse-submodules <remote_url>
-    git pull --recurse-submodules <branch>
+4.  根據提示，貼上您想下載的 YouTube 影片或播放清單的網址，然後按下 Enter。
+5.  程式將開始下載，完成的影片會儲存在同一個資料夾下。
+
+### YTDL_mul.py (圖形介面模式 - 剪貼簿監控批次下載)
+
+此模式會啟動一個圖形介面，持續監控您的剪貼簿。當您複製 YouTube 網址時，它會自動加入待下載清單，非常適合快速收集並一次性下載多個來自不同地方的影片。
+
+1.  直接雙擊 `YTDL_mul.py` 檔案，或在終端機中執行:
+    ```bash
+    python YTDL_mul.py
     ```
+2.  程式會開啟一個視窗。點擊 **"開始監控 (Start Watching)"** 按鈕。
+3.  現在，您可以在瀏覽器或其他任何地方複製 YouTube 影片的網址。每複製一個，它就會自動出現在視窗的列表中。
+4.  收集完所有您想下載的網址後，點擊 **"全部下載 (Download All)"** 按鈕。
+5.  程式會開始依序下載列表中的所有影片。
 
-## Structure
+## 注意事項
 
-* `metadata.json` based
-* Modify `metadata.json`, then download videos by importing `metadata.json`
-
-## Future
-```
-yt-dlp -S "res,vbr,codec:avc1:vp9:vp09:av01" -f "bv[vcodec^=avc1]+ba[acodec^=mp4a]/bv[vcodec^=vp9]+ba[acodec^=opus]/bv[vcodec^=vp09]+ba[acodec^=opus]/bv[vcodec^=av01]+ba[acodec^=opus]"
-```
-```
-yt-dlp -v -F ^
--S "res,hdr,+codec:avc1:mp4,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:av01:opus,vbr" ^
--f "bv+ba" ^
-https://www.youtube.com/watch?v=3hLESh77fSg
-```
+-   **首次執行**: 第一次執行任一腳本時，程式可能會花一點時間自動安裝 `requests` 和 `pyperclip` 等輔助套件，這是正常現象。
+-   **防火牆**: 首次執行時，您的作業系統防火牆可能會跳出提示，請允許程式存取網路以進行更新與下載。
+-   **錯誤回報**: 程式內建了錯誤回報機制，當發生嚴重錯誤時，會自動將錯誤資訊 (不含任何個人隱私) 傳送到 Discord 以便開發者修復問題。
+-   **檔案路徑**: 下載的影片會儲存在與執行腳本相同的資料夾中。
