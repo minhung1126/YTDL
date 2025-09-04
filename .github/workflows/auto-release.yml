@@ -30,7 +30,12 @@ jobs:
           VERSION=$(grep '^__version__' YTDL.py | cut -d '"' -f 2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
         
-      # Step 3: Create the new release using the extracted version
+      # Step 3: Package YTDL.py and YTDL_mul.py into a zip file
+      - name: "Package files into a zip"
+        if: steps.version_extractor.outputs.version != 'dev'
+        run: zip "主程式 Main Code.zip" YTDL.py YTDL_mul.py
+
+      # Step 4: Create the new release using the extracted version
       - name: "Create Release"
         # Only run this step if the version is not 'dev'
         if: steps.version_extractor.outputs.version != 'dev'
@@ -44,3 +49,6 @@ jobs:
           automatic_release_tag: ${{ steps.version_extractor.outputs.version }}
           # (Optional) Set a title for the release
           title: "Release ${{ steps.version_extractor.outputs.version }}"
+          # Add the zip file to the release assets
+          files: |
+            主程式 Main Code.zip
