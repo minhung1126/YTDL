@@ -12,7 +12,7 @@ import socket
 # --- Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.09.05.07"
+__version__ = "v2025.09.05.08"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End Versioning ---
@@ -167,7 +167,7 @@ class Video:
             with open(self.meta_filepath, 'r', encoding='utf-8') as f:
                 return json.loads(f.read())
         except Exception:
-            report_error(f"Failed to read or parse meta file: {self.meta_filepath}", context={
+            report_error(f"Failed to read or parse meta file: {self.meta_filepath}", context= {
                          "Traceback": traceback.format_exc()})
             return {}
 
@@ -192,7 +192,7 @@ class Video:
                 return
             os.remove(self.meta_filepath)
         except Exception:
-            report_error(f"An unexpected error occurred during download.", context={
+            report_error(f"An unexpected error occurred during download.", context= {
                          "Traceback": traceback.format_exc(), **context})
 
 def dl_meta_from_url(url: str):
@@ -206,7 +206,7 @@ def dl_meta_from_url(url: str):
             args.append('--no-playlist')
         subprocess.run(args, check=True)
     except Exception:
-        report_error(f"Failed to download metadata.", context={
+        report_error(f"Failed to download metadata.", context= {
                      "Traceback": traceback.format_exc(), **context})
 
 def load_videos_from_meta() -> list[Video]:
@@ -246,12 +246,21 @@ def cleanup():
         try:
             shutil.rmtree(META_DIR)
         except OSError:
-            report_error(f"Error cleaning up meta directory: {META_DIR}", context={
+            report_error(f"Error cleaning up meta directory: {META_DIR}", context= {
                          "Traceback": traceback.format_exc()})
 
 def main():
     try:
         check_for_updates(sys.argv[0])
+        # 檢查並刪除 self_update.py (如果存在)
+        updater_script_name = "self_update.py"
+        updater_script_path = os.path.join(os.getcwd(), updater_script_name)
+        if os.path.exists(updater_script_path):
+            try:
+                os.remove(updater_script_path)
+                print(f"已刪除舊的 {updater_script_name}")
+            except Exception as e:
+                print(f"無法刪除 {updater_script_name}: {e}", file=sys.stderr)
         while True:
             parse_user_action()
             videos = load_videos_from_meta()
