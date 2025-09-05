@@ -44,5 +44,4 @@ jobs:
           gh release create ${{ steps.version_extractor.outputs.version }} \
             "YTDL.${{ steps.version_extractor.outputs.version }}.zip" \
             --title "Release ${{ steps.version_extractor.outputs.version }}" \
-            --notes "下載YTDL.${{ steps.version_extractor.outputs.version }}.zip，之後解壓縮即可使用。" \
-            --generate-notes
+            --notes "下載YTDL.${{ steps.version_extractor.outputs.version }}.zip，之後解壓縮即可使用。"
