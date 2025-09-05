@@ -18,7 +18,7 @@ except ImportError:
 #! --- Configuration ---
 # Set to "dev" to disable update checks during development.
 # Otherwise, set to the release version, e.g., "v2025.09.04".
-__version__ = "v2025.09.05.03"
+__version__ = "v2025.09.05.04"
 # __version__ = "dev"
 
 # Paste your Discord webhook URL here. If left empty, errors will only be printed to the console.
