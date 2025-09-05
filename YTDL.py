@@ -9,6 +9,14 @@ import traceback
 import platform
 import socket
 
+# --- Versioning ---
+# 在開發環境中，版本號會被設為 "dev"。
+# 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
+__version__ = "v2025.09.05.07"
+if os.path.exists('.gitignore'):
+    __version__ = "dev"
+# --- End Versioning ---
+
 try:
     import requests
 except ImportError:
@@ -16,12 +24,6 @@ except ImportError:
     import requests
 
 #! --- Configuration ---
-try:
-    # For development, create a version_dev.py with __version__ = "dev"
-    from version_dev import __version__
-except ImportError:
-    from version import __version__
-
 # 貼上您的 Discord Webhook URL，用於錯誤回報與更新通知。
 # 若為空，訊息將只會印在控制台。
 DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1412620490257989734/xlFKOYTt9Nk5tTKJfdHxoenChkRkqGrNtHRrsFTqr71-z-oqFBNNTSlhLmcN5YVk8J0a"
