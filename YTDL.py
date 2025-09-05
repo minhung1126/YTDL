@@ -22,7 +22,8 @@ try:
 except ImportError:
     from version import __version__
 
-# Paste your Discord webhook URL here. If left empty, errors will only be printed to the console.
+# 貼上您的 Discord Webhook URL，用於錯誤回報與更新通知。
+# 若為空，訊息將只會印在控制台。
 DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1412620490257989734/xlFKOYTt9Nk5tTKJfdHxoenChkRkqGrNtHRrsFTqr71-z-oqFBNNTSlhLmcN5YVk8J0a"
 #! ---------------------
 
@@ -57,7 +58,7 @@ def report_error(message: str, context: dict = None):
         f"[ERROR] An error occurred:\n{computer_info}\n{context_message}{full_message}", file=sys.stderr)
 
     # --- Send to Discord ---
-    if DISCORD_WEBHOOK:
+    if DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in DISCORD_WEBHOOK:
         try:
             discord_payload = {
                 "content": f"🚨 **YTDL Error Report:**\n{computer_info}\n{context_message}**Error:**\n```\n{full_message[:1500]}\n```"}
@@ -67,11 +68,58 @@ def report_error(message: str, context: dict = None):
                 f"[CRITICAL] Failed to send error report to Discord: {e}", file=sys.stderr)
 
 
+def send_discord_notification(message: str):
+    """
+    發送一個簡單的通知到 Discord Webhook (如果已設定)。
+    """
+    if DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in DISCORD_WEBHOOK:
+        try:
+            discord_payload = {"content": f"ℹ️ **YTDL 通知:**\n{message}"}
+            requests.post(DISCORD_WEBHOOK, json=discord_payload, timeout=10)
+        except Exception as e:
+            print(f"[警告] 發送通知到 Discord 失敗: {e}", file=sys.stderr)
+
+
+def check_yt_dlp_update():
+    """
+    檢查是否有新版本的 yt-dlp 可用（不更新），並在需要時發送通知。
+    """
+    print("正在檢查 yt-dlp 是否有新版本...")
+    try:
+        # 1. 取得本機目前版本
+        local_version_proc = subprocess.run([EXECUTABLE, '--version'], capture_output=True, text=True, check=True, encoding='utf-8')
+        local_version = local_version_proc.stdout.strip()
+
+        # 2. 從 GitHub 取得最新版本
+        repo = "yt-dlp/yt-dlp"
+        api_url = f"https://api.github.com/repos/{repo}/releases/latest"
+        response = requests.get(api_url, timeout=5)
+        response.raise_for_status()
+        latest_version = response.json()["tag_name"]
+
+        # 3. 比較並通知
+        print(f"本機 yt-dlp 版本: {local_version}, 最新版本: {latest_version}")
+        if local_version != latest_version:
+            print(f"發現新的 yt-dlp 版本: {latest_version}")
+            send_discord_notification(f"發現新的 `yt-dlp` 版本！\n- 目前版本: `{local_version}`\n- 最新版本: `{latest_version}`")
+        else:
+            print("您的 yt-dlp 已是最新版本。")
+
+    except FileNotFoundError:
+        print(f"[警告] 找不到 '{EXECUTABLE}'。無法檢查 yt-dlp 更新。", file=sys.stderr)
+    except Exception:
+        report_error("檢查 yt-dlp 版本失敗。", context={"Traceback": traceback.format_exc()})
+
+
 def check_for_updates(caller_script: str):
     if __version__ == "dev":
-        print("Development version, skipping update check.")
+        print("開發版本，跳過 YTDL 更新檢查。")
+        # 即使是開發版，可能還是會想知道 yt-dlp 的狀況
+        check_yt_dlp_update()
         return
-    print(f"Current version: {__version__}")
+
+    # 1. 檢查 YTDL 本身的更新
+    print(f"目前版本: {__version__}")
     try:
         repo = "minhung1126/YTDL"
         api_url = f"https://api.github.com/repos/{repo}/releases/latest"
@@ -80,13 +128,13 @@ def check_for_updates(caller_script: str):
         latest_version = response.json()["tag_name"]
         if latest_version != __version__:
             print(
-                f"New version available: {latest_version}. Starting update...")
+                f"發現新版本: {latest_version}。開始更新...")
             base_url = f"https://raw.githubusercontent.com/{repo}/main/"
             updater_script_name = "self_update.py"
             resp = requests.get(f"{base_url}{updater_script_name}")
             if not resp.ok:
                 report_error(
-                    f"Failed to download updater script: {updater_script_name}. Status: {resp.status_code}")
+                    f"下載更新腳本失敗: {updater_script_name}。狀態碼: {resp.status_code}")
                 return
             with open(updater_script_name, 'wb') as f:
                 f.write(resp.content)
@@ -94,9 +142,12 @@ def check_for_updates(caller_script: str):
                 [sys.executable, updater_script_name, caller_script, DISCORD_WEBHOOK])
             sys.exit(0)
         else:
-            print("You are on the latest version.")
+            print("您目前使用的是最新版本。")
     except Exception:
         report_error(traceback.format_exc())
+
+    # 2. 順便檢查 yt-dlp 的更新
+    check_yt_dlp_update()
 
 class Video:
     def __init__(self, meta_filepath: str):
