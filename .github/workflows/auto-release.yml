@@ -33,7 +33,7 @@ jobs:
       # Step 3: Package YTDL.py and YTDL_mul.py into a zip file
       - name: "Package files into a zip"
         if: steps.version_extractor.outputs.version != 'dev'
-        run: zip "YTDL.zip" YTDL.py YTDL_mul.py
+        run: zip "YTDL.${{ steps.version_extractor.outputs.version }}.zip" YTDL.py YTDL_mul.py
 
       # Step 4: Create the new release using the extracted version
       - name: "Create Release"
@@ -51,4 +51,4 @@ jobs:
           title: "Release ${{ steps.version_extractor.outputs.version }}"
           # Add the zip file to the release assets
           files: |
-            YTDL.zip
+            YTDL.${{ steps.version_extractor.outputs.version }}.zip
