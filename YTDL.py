@@ -16,10 +16,11 @@ except ImportError:
     import requests
 
 #! --- Configuration ---
-# Set to "dev" to disable update checks during development.
-# Otherwise, set to the release version, e.g., "v2025.09.04".
-__version__ = "v2025.09.05.04"
-# __version__ = "dev"
+try:
+    # For development, create a version_dev.py with __version__ = "dev"
+    from version_dev import __version__
+except ImportError:
+    from version import __version__
 
 # Paste your Discord webhook URL here. If left empty, errors will only be printed to the console.
 DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1412620490257989734/xlFKOYTt9Nk5tTKJfdHxoenChkRkqGrNtHRrsFTqr71-z-oqFBNNTSlhLmcN5YVk8J0a"
