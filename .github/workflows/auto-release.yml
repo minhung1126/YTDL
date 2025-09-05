@@ -22,18 +22,18 @@ jobs:
       - name: "Checkout code"
         uses: actions/checkout@v4
 
-      # Step 2: Extract the __version__ from version.py
-      - name: "Extract version from version.py"
+      # Step 2: Extract the __version__ from YTDL.py
+      - name: "Extract version from YTDL.py"
         id: version_extractor
         run: |
           # Find the line starting with __version__ to ignore commented lines
-          VERSION=$(grep '^__version__' version.py | cut -d '"' -f 2)
+          VERSION=$(grep '^__version__' YTDL.py | cut -d '"' -f 2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
         
-      # Step 3: Package YTDL.py, YTDL_mul.py, and version.py into a zip file
+      # Step 3: Package YTDL.py, YTDL_mul.py, and self_update.py into a zip file
       - name: "Package files into a zip"
         if: steps.version_extractor.outputs.version != 'dev'
-        run: zip "YTDL.${{ steps.version_extractor.outputs.version }}.zip" YTDL.py YTDL_mul.py version.py
+        run: zip "YTDL.${{ steps.version_extractor.outputs.version }}.zip" YTDL.py YTDL_mul.py self_update.py
 
       # Step 4: Create the new release using the extracted version
       - name: "Create Release"
