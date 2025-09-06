@@ -13,7 +13,7 @@ import base64
 # --- Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.09.06"
+__version__ = "v2025.09.06.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End Versioning ---
@@ -98,13 +98,15 @@ def check_yt_dlp_update():
         api_url = f"https://api.github.com/repos/{repo}/releases/latest"
         response = requests.get(api_url, timeout=5)
         response.raise_for_status()
-        latest_version = response.json()["tag_name"]
+        release_data = response.json()
+        latest_version = release_data["tag_name"]
+        release_url = release_data["html_url"]
 
         # 3. 比較並通知
         print(f"本機 yt-dlp 版本: {local_version}, 最新版本: {latest_version}")
         if local_version != latest_version:
             print(f"發現新的 yt-dlp 版本: {latest_version}")
-            send_discord_notification(f"發現新的 `yt-dlp` 版本！\n- 目前版本: `{local_version}`\n- 最新版本: `{latest_version}`")
+            send_discord_notification(f"發現新的 `yt-dlp` 版本！\n- 目前版本: `{local_version}`\n- 最新版本: `{latest_version}`\n- Release URL: {release_url}")
         else:
             print("您的 yt-dlp 已是最新版本。")
 
