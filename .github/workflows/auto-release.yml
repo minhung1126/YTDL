@@ -35,7 +35,12 @@ jobs:
         if: steps.version_extractor.outputs.version != 'dev'
         run: zip "YTDL.${{ steps.version_extractor.outputs.version }}.zip" YTDL.py YTDL_mul.py self_update.py
 
-      # Step 4: Create the new release using the extracted version
+      # Step 4: Prepare release notes
+      - name: "Prepare release notes"
+        if: steps.version_extractor.outputs.version != 'dev'
+        run: echo '下載`YTDL.${{ steps.version_extractor.outputs.version }}.zip`，之後解壓縮即可使用。' > release_notes.md
+
+      # Step 5: Create the new release using the extracted version
       - name: "Create Release"
         if: steps.version_extractor.outputs.version != 'dev'
         env:
@@ -44,5 +49,5 @@ jobs:
           gh release create ${{ steps.version_extractor.outputs.version }} \
             "YTDL.${{ steps.version_extractor.outputs.version }}.zip" \
             --title "Release ${{ steps.version_extractor.outputs.version }}" \
-            --notes "下載`YTDL.${{ steps.version_extractor.outputs.version }}.zip`，之後解壓縮即可使用。" \
+            --notes-file "release_notes.md" \
             --generate-notes
