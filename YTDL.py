@@ -8,11 +8,12 @@ import sys
 import traceback
 import platform
 import socket
+import base64
 
 # --- Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.09.05.08"
+__version__ = "v2025.09.06"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End Versioning ---
@@ -24,9 +25,9 @@ except ImportError:
     import requests
 
 #! --- Configuration ---
-# 貼上您的 Discord Webhook URL，用於錯誤回報與更新通知。
-# 若為空，訊息將只會印在控制台。
-DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1412620490257989734/xlFKOYTt9Nk5tTKJfdHxoenChkRkqGrNtHRrsFTqr71-z-oqFBNNTSlhLmcN5YVk8J0a"
+# Webhook URL 已使用 Base64 編碼儲存，以避免明文暴露。
+DISCORD_WEBHOOK_ENCODED = "aHR0cHM6Ly9kaXNjb3JkLmNvbS9hcGkvd2ViaG9va3MvMTQxMzc0NjU0MTY4MzkzNzM5MC9tWm9ZRy1mS211cnhFMFhPNWhjUmhITzBJWEREaWgyeDF2QnJ4dEFzQ0VTdEZ3M0FFTnNYamt3djQzbWFoaHhOQzFybw=="
+DISCORD_WEBHOOK = base64.b64decode(DISCORD_WEBHOOK_ENCODED).decode('utf-8') if DISCORD_WEBHOOK_ENCODED else ""
 #! ---------------------
 
 META_DIR = os.path.join(os.getcwd(), 'meta')
