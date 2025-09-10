@@ -178,6 +178,8 @@ class ClipboardWatcherApp:
 
 if __name__ == "__main__":
     try:
+        # Clear clipboard at startup to avoid processing old URLs.
+        pyperclip.copy('')
         YTDL.check_for_updates(sys.argv[0])
         root = tk.Tk()
         app = ClipboardWatcherApp(root)
