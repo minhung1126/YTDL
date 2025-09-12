@@ -141,6 +141,11 @@ class ClipboardWatcherApp:
             messagebox.showinfo(UI_TEXT["msg_no_urls_title"], UI_TEXT["msg_no_urls_body"])
             return
 
+        # Stop watching when download starts. This also resets the watch_button text.
+        if self.is_watching:
+            self.toggle_watching()
+
+        # Disable buttons during download.
         self.watch_button.config(state=tk.DISABLED)
         self.download_button.config(state=tk.DISABLED)
         self.status_var.set(UI_TEXT["status_starting_download"])
