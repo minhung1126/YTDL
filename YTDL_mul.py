@@ -1,5 +1,4 @@
 import sys
-sys.dont_write_bytecode = True
 import time
 import traceback
 import threading
@@ -115,7 +114,7 @@ class ClipboardWatcherApp:
             current_clipboard = pyperclip.paste()
             if current_clipboard:
                 import re
-                found_urls = re.findall(r'https?://(?:www\.)?(?:youtube\.com/|youtu\.be/)[\w\-?=&/]+', current_clipboard)
+                found_urls = re.findall(r'https?://(?:www\.)?(?:youtube\.com/|youtu\.be/)[\w\-?=&]+', current_clipboard)
                 for url in found_urls:
                     if url not in self.detected_urls:
                         self.detected_urls.add(url)
@@ -141,11 +140,6 @@ class ClipboardWatcherApp:
             messagebox.showinfo(UI_TEXT["msg_no_urls_title"], UI_TEXT["msg_no_urls_body"])
             return
 
-        # Stop watching when download starts. This also resets the watch_button text.
-        if self.is_watching:
-            self.toggle_watching()
-
-        # Disable buttons during download.
         self.watch_button.config(state=tk.DISABLED)
         self.download_button.config(state=tk.DISABLED)
         self.status_var.set(UI_TEXT["status_starting_download"])
@@ -165,7 +159,7 @@ class ClipboardWatcherApp:
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_processing_meta"].format(count=len(urls))))
             for url in urls:
                 YTDL.dl_meta_from_url(url)
-            
+
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_meta_done"]))
             videos_to_download = YTDL.load_videos_from_meta()
             total_videos = len(videos_to_download)
@@ -173,8 +167,7 @@ class ClipboardWatcherApp:
                 title = video.meta.get('title', 'N/A')[:25]
                 self.master.after(0, lambda i=i, t=title: self.status_var.set(UI_TEXT["status_downloading"].format(i=i+1, total=total_videos, title=t)))
                 video.download()
-            
-            YTDL.cleanup()
+
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_all_done"]))
         except Exception:
             error_message = "A critical error occurred during the download process."
