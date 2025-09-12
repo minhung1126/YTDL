@@ -5,6 +5,7 @@ import sys
 import traceback
 import platform
 import socket
+import shutil
 from zipfile import ZipFile
 
 try:
@@ -79,6 +80,15 @@ def program_files_update(webhook_url: str):
         print("==================================================")
         print("Update process completed successfully.")
         print("==================================================")
+
+        print("Cleaning up...")
+        if os.path.exists("__pycache__"):
+            try:
+                shutil.rmtree("__pycache__")
+                print("Removed __pycache__ directory.")
+            except OSError as e:
+                print(f"Error removing __pycache__: {e}")
+
         return True
 
     except Exception:
@@ -100,7 +110,10 @@ def main():
     print("Update complete. Restarting application...")
     if caller_script_path and os.path.exists(caller_script_path):
         try:
-            os.execv(sys.executable, ['python', caller_script_path])
+            if platform.system() == "Windows":
+                subprocess.Popen([sys.executable, caller_script_path], creationflags=subprocess.DETACHED_PROCESS, close_fds=True)
+            else:
+                subprocess.Popen([sys.executable, caller_script_path])
         except Exception:
             error_message = f"Failed to restart the application at {caller_script_path}.\n{traceback.format_exc()}"
             report_error_updater(error_message, webhook_url)
