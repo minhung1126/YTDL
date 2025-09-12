@@ -15,7 +15,7 @@ import base64
 # --- Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.09.12.04"
+__version__ = "v2025.09.12.05"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End Versioning ---
