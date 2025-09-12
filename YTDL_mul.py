@@ -1,4 +1,5 @@
 import sys
+sys.dont_write_bytecode = True
 import time
 import traceback
 import threading
@@ -114,7 +115,7 @@ class ClipboardWatcherApp:
             current_clipboard = pyperclip.paste()
             if current_clipboard:
                 import re
-                found_urls = re.findall(r'https?://(?:www\.)?(?:youtube\.com/|youtu\.be/)[\w\-?=&]+', current_clipboard)
+                found_urls = re.findall(r'https?://(?:www\.)?(?:youtube\.com/|youtu\.be/)[\w\-?=&/]+', current_clipboard)
                 for url in found_urls:
                     if url not in self.detected_urls:
                         self.detected_urls.add(url)
