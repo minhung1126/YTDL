@@ -111,7 +111,12 @@ def main():
     if caller_script_path and os.path.exists(caller_script_path):
         try:
             if platform.system() == "Windows":
-                subprocess.Popen([sys.executable, caller_script_path], creationflags=subprocess.DETACHED_PROCESS, close_fds=True)
+                # Use subprocess.Popen with DETACHED_PROCESS for a more robust restart
+                subprocess.Popen(
+                    [sys.executable, caller_script_path],
+                    creationflags=subprocess.DETACHED_PROCESS,
+                    close_fds=True
+                )
             else:
                 subprocess.Popen([sys.executable, caller_script_path])
         except Exception:
