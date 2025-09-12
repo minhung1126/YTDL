@@ -13,7 +13,7 @@ import base64
 # --- Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.09.１０"
+__version__ = "v2025.09.12"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End Versioning ---
@@ -116,13 +116,11 @@ def check_yt_dlp_update():
         report_error("檢查 yt-dlp 版本失敗。", context={"Traceback": traceback.format_exc()})
 
 
-def check_for_updates(caller_script: str):
-    if __version__ == "dev":
-        print("開發版本，跳過 YTDL 更新檢查。")
-        # 即使是開發版，可能還是會想知道 yt-dlp 的狀況
-        check_yt_dlp_update()
-        return
-
+def handle_updates_and_cleanup(caller_script: str):
+    """
+    處理程式自身的更新、yt-dlp 的版本檢查以及相關的清理工作。
+    此函數不應在 dev 版本中被呼叫。
+    """
     # 1. 檢查 YTDL 本身的更新
     print(f"目前版本: {__version__}")
     try:
@@ -132,8 +130,7 @@ def check_for_updates(caller_script: str):
         response.raise_for_status()
         latest_version = response.json()["tag_name"]
         if latest_version != __version__:
-            print(
-                f"發現新版本: {latest_version}。開始更新...")
+            print(f"發現新版本: {latest_version}。開始更新...")
             base_url = f"https://raw.githubusercontent.com/{repo}/main/"
             updater_script_name = "self_update.py"
             resp = requests.get(f"{base_url}{updater_script_name}")
@@ -153,6 +150,17 @@ def check_for_updates(caller_script: str):
 
     # 2. 順便檢查 yt-dlp 的更新
     check_yt_dlp_update()
+
+    # 3. 檢查並刪除 self_update.py (如果存在)
+    updater_script_name = "self_update.py"
+    updater_script_path = os.path.join(os.getcwd(), updater_script_name)
+    if os.path.exists(updater_script_path):
+        try:
+            os.remove(updater_script_path)
+            print(f"已刪除舊的 {updater_script_name}")
+        except Exception as e:
+            print(f"無法刪除 {updater_script_name}: {e}", file=sys.stderr)
+
 
 class Video:
     def __init__(self, meta_filepath: str):
@@ -254,16 +262,10 @@ def cleanup():
 
 def main():
     try:
-        check_for_updates(sys.argv[0])
-        # 檢查並刪除 self_update.py (如果存在)
-        updater_script_name = "self_update.py"
-        updater_script_path = os.path.join(os.getcwd(), updater_script_name)
-        if os.path.exists(updater_script_path):
-            try:
-                os.remove(updater_script_path)
-                print(f"已刪除舊的 {updater_script_name}")
-            except Exception as e:
-                print(f"無法刪除 {updater_script_name}: {e}", file=sys.stderr)
+        if __version__ != "dev":
+            handle_updates_and_cleanup(sys.argv[0])
+        else:
+            print("開發版本，跳過更新與清理程序。")
         while True:
             parse_user_action()
             videos = load_videos_from_meta()
@@ -280,6 +282,7 @@ def main():
         report_error(f"A critical error occurred in the main loop.",
                      context={"Traceback": traceback.format_exc()})
         input("Press ENTER to exit.")
+
 
 if __name__ == "__main__":
     main()
