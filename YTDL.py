@@ -1,5 +1,3 @@
-import sys
-sys.dont_write_bytecode = True
 import os
 import json
 import shutil
@@ -15,7 +13,7 @@ import base64
 # --- Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.09.12.07"
+__version__ = "v2025.09.13"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End Versioning ---
@@ -189,8 +187,23 @@ class Video:
         context = {"Video Title": self.meta.get(
             'title', 'N/A'), "Video URL": self.meta.get('webpage_url', 'N/A')}
         try:
-            args = [EXECUTABLE, '-f', 'bv+ba', '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr', '--embed-subs', '--sub-langs', 'all,-live_chat', '--embed-thumbnail',
-                    '--embed-metadata', '--merge-output-format', 'mkv', '--remux-video', 'mkv', '--encoding', 'utf-8', '--concurrent-fragments', CONCURRENT_FRAGMENTS, '--progress-delta', PROGRESS_BAR_SECONDS, '-o', self.template, self.url]
+            args = [
+                EXECUTABLE,
+                '-f', 'bv+ba',
+                '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr',
+                '--embed-subs',
+                '--sub-langs', 'all,-live_chat',
+                '--no-playlist',
+                '--embed-thumbnail',
+                '--embed-metadata',
+                '--merge-output-format', 'mkv',
+                '--remux-video', 'mkv',
+                '--encoding', 'utf-8',
+                '--concurrent-fragments', CONCURRENT_FRAGMENTS,
+                '--progress-delta', PROGRESS_BAR_SECONDS,
+                '-o', self.template,
+                '--load-info-json', self.meta_filepath
+            ]
             process = subprocess.Popen(
                 args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='ignore')
             while True:
@@ -202,11 +215,21 @@ class Video:
             if process.returncode != 0:
                 report_error(
                     f"Download failed. yt-dlp exited with code {process.returncode}", context=context)
-                return
-            os.remove(self.meta_filepath)
+                return False
+
+            try:
+                os.remove(self.meta_filepath)
+                print(
+                    f"Metafile for '{self.meta.get('title', 'N/A')}' deleted.")
+            except OSError as e:
+                report_error(f"CRITICAL: Failed to delete metafile {self.meta_filepath} after successful download.", context={
+                             "Error": str(e)})
+                return False
+            return True
         except Exception:
             report_error(f"An unexpected error occurred during download.", context= {
                          "Traceback": traceback.format_exc(), **context})
+            return False
 
 def dl_meta_from_url(url: str):
     context = {"URL": url}
@@ -255,12 +278,13 @@ def parse_user_action():
             print("Invalid URL. Please enter a valid YouTube URL.")
 
 def cleanup():
-    if os.path.isdir(META_DIR):
+    if os.path.isdir(META_DIR) and not os.listdir(META_DIR):
         try:
-            shutil.rmtree(META_DIR)
-        except OSError:
-            report_error(f"Error cleaning up meta directory: {META_DIR}", context= {
-                         "Traceback": traceback.format_exc()})
+            os.rmdir(META_DIR)
+            print("Empty meta directory deleted.")
+        except OSError as e:
+            report_error(f"Error deleting empty meta directory: {META_DIR}", context={
+                         "Error": str(e)})
 
 def main():
     try:
@@ -276,7 +300,9 @@ def main():
                 continue
             for vid in videos:
                 vid.download()
+
             cleanup()
+
             print("\nAll downloads complete. You can enter another URL or type 'exit'.")
     except SystemExit:
         pass
