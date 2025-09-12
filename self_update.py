@@ -1,7 +1,8 @@
+import sys
+sys.dont_write_bytecode = True
 import os
 import io
 import subprocess
-import sys
 import traceback
 import platform
 import socket
@@ -13,11 +14,6 @@ try:
 except ImportError:
     print("[FATAL] requests library not found. Cannot proceed with update.", file=sys.stderr)
     sys.exit(1)
-
-try:
-    sys.dont_write_bytecode = True
-except (ImportError, AttributeError):
-    pass
 
 def report_error_updater(message: str, webhook_url: str):
     """
