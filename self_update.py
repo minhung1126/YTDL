@@ -106,10 +106,9 @@ def main():
     print("Update complete. Restarting application...")
     if caller_script_path and os.path.exists(caller_script_path):
         try:
-            # On both Windows and other OSes, Popen without special flags
-            # will typically result in the child process inheriting the
-            # parent's console and standard I/O handles.
-            subprocess.Popen([sys.executable, caller_script_path])
+            # Replace the updater script process with the main application process.
+            # This is a cleaner way to restart, as it preserves the console and standard I/O.
+            os.execv(sys.executable, [sys.executable, caller_script_path])
         except Exception:
             error_message = f"Failed to restart the application at {caller_script_path}.\n{traceback.format_exc()}"
             report_error_updater(error_message, webhook_url)
