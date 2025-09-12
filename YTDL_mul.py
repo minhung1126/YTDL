@@ -3,7 +3,7 @@ import time
 import traceback
 import threading
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import ttk, scrolledtext, messagebox, font
 
 import YTDL  # Import the core logic
 
@@ -18,14 +18,15 @@ except ImportError:
 
 # --- UI Text Dictionary ---
 UI_TEXT = {
-    "window_title": "剪貼簿監控下載器 | YTDL Clipboard Watcher",
+    "window_title": "YouTube 網址自動下載器 | YouTube URL Auto-Downloader",
+    "instructions": "點擊「開始偵測」後，程式會自動尋找您複製的 YouTube 網址。\n網址會顯示在下方列表中，您可以隨時點擊「全部下載」。",
     "detected_urls": "偵測到的網址 | Detected URLs",
-    "start_watching": "開始監控 | Start Watching",
-    "stop_watching": "停止監控 | Stop Watching",
+    "start_detecting": "開始偵測 | Start Detecting",
+    "stop_detecting": "停止偵測 | Stop Detecting",
     "download_all": "全部下載 | Download All",
-    "status_ready": "就緒。請點擊「開始監控」。 | Ready. Click 'Start Watching' to begin.",
-    "status_stopped": "已停止。請點擊「開始監控」以繼續。 | Stopped. Click 'Start Watching' to resume.",
-    "status_watching": "正在監控剪貼簿... | Watching clipboard for YouTube URLs...",
+    "status_ready": "就緒。請點擊「開始偵測」。 | Ready. Click 'Start Detecting' to begin.",
+    "status_stopped": "已停止。點擊「開始偵測」以繼續。 | Stopped. Click 'Start Detecting' to resume.",
+    "status_watching": "正在偵測剪貼簿中的網址... | Detecting URLs in clipboard...",
     "status_starting_download": "開始下載流程... | Starting download process...",
     "status_processing_meta": "正在處理 {count} 個網址的元數據... | Processing {count} URLs for metadata...",
     "status_meta_done": "元數據處理完畢，開始下載... | Metadata processed. Starting downloads...",
@@ -47,7 +48,7 @@ class ClipboardWatcherApp:
     def __init__(self, master):
         self.master = master
         master.title(UI_TEXT["window_title"])
-        master.geometry("650x450")
+        master.geometry("750x550")
         master.resizable(False, False)
 
         self.is_watching = False
@@ -62,6 +63,13 @@ class ClipboardWatcherApp:
         main_frame = ttk.Frame(self.master, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
+        # Configure style for the instruction label
+        style = ttk.Style(self.master)
+        style.configure("Instructions.TLabel", font=("Microsoft JhengHei UI", 10))
+
+        instructions_label = ttk.Label(main_frame, text=UI_TEXT["instructions"], justify=tk.LEFT, relief=tk.RIDGE, padding="5", style="Instructions.TLabel")
+        instructions_label.pack(fill=tk.X, pady=(0, 10))
+
         url_frame = ttk.LabelFrame(main_frame, text=UI_TEXT["detected_urls"])
         url_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
@@ -72,7 +80,7 @@ class ClipboardWatcherApp:
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=5)
 
-        self.watch_button = ttk.Button(button_frame, text=UI_TEXT["start_watching"], command=self.toggle_watching)
+        self.watch_button = ttk.Button(button_frame, text=UI_TEXT["start_detecting"], command=self.toggle_watching)
         self.watch_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
 
         self.download_button = ttk.Button(button_frame, text=UI_TEXT["download_all"], command=self.start_download)
@@ -88,11 +96,15 @@ class ClipboardWatcherApp:
             self.is_watching = False
             if self.clipboard_after_id:
                 self.master.after_cancel(self.clipboard_after_id)
-            self.watch_button.config(text=UI_TEXT["start_watching"])
+            self.watch_button.config(text=UI_TEXT["start_detecting"])
             self.status_var.set(UI_TEXT["status_stopped"])
         else:
             self.is_watching = True
-            self.watch_button.config(text=UI_TEXT["stop_watching"])
+            try:
+                pyperclip.copy('')  # 清空剪貼簿
+            except Exception as e:
+                YTDL.report_error(f"無法清空剪貼簿 (Could not clear clipboard): {e}")
+            self.watch_button.config(text=UI_TEXT["stop_detecting"])
             self.status_var.set(UI_TEXT["status_watching"])
             self.poll_clipboard()
 
@@ -115,7 +127,8 @@ class ClipboardWatcherApp:
 
     def update_url_display(self, text):
         self.url_text.config(state=tk.NORMAL)
-        self.url_text.insert(tk.END, text + "\n")
+        seq_num = len(self.detected_urls)
+        self.url_text.insert(tk.END, f"{seq_num}. {text}\n")
         self.url_text.see(tk.END)
         self.url_text.config(state=tk.DISABLED)
 
@@ -180,7 +193,12 @@ if __name__ == "__main__":
     try:
         # Clear clipboard at startup to avoid processing old URLs.
         pyperclip.copy('')
-        YTDL.check_for_updates(sys.argv[0])
+
+        if YTDL.__version__ != "dev":
+            YTDL.handle_updates_and_cleanup(sys.argv[0])
+        else:
+            print("開發版本，跳過更新與清理程序。")
+
         root = tk.Tk()
         app = ClipboardWatcherApp(root)
         root.mainloop()
