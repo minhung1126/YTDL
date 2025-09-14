@@ -13,7 +13,7 @@ import base64
 # --- Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.09.14"
+__version__ = "v2025.09.14.02"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End Versioning ---
@@ -54,7 +54,11 @@ def report_error(message: str, context: dict = None):
     context_message = ""
     if context:
         for key, value in context.items():
-            context_message += f"**{key}:** `{value}`\n"
+            # 如果值以 '```' 開頭，我們假設它是一個預格式化的程式碼區塊
+            if str(value).startswith("```"):
+                context_message += f"**{key}:**\n{value}\n"
+            else:
+                context_message += f"**{key}:** `{value}`\n"
 
     # --- Print to Console ---
     print(
@@ -63,8 +67,14 @@ def report_error(message: str, context: dict = None):
     # --- Send to Discord ---
     if DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in DISCORD_WEBHOOK:
         try:
-            discord_payload = {
-                "content": f"🚨 **YTDL Error Report:**\n{computer_info}\n{context_message}**Error:**\n```\n{full_message[:1500]}\n```"}
+            # 組裝 Discord payload
+            final_report = f"🚨 **YTDL Error Report:**\n{computer_info}\n{context_message}**Error:**\n```\n{full_message}\n```"
+            
+            # 如果報告太長，從尾部裁剪以確保它在 Discord 的限制內
+            if len(final_report) > 2000:
+                final_report = final_report[:1990] + "...```"
+
+            discord_payload = {"content": final_report}
             requests.post(DISCORD_WEBHOOK, json=discord_payload, timeout=10)
         except Exception as e:
             print(
@@ -112,7 +122,17 @@ def check_yt_dlp_update():
 
     except FileNotFoundError:
         print(f"[警告] 找不到 '{EXECUTABLE}'。無法檢查 yt-dlp 更新。", file=sys.stderr)
+    except subprocess.CalledProcessError as e:
+        # 如果 yt-dlp --version 命令失敗，報告詳細錯誤
+        terminal_output = f"--- STDOUT ---\n{e.stdout}\n\n--- STDERR ---\n{e.stderr}"
+        context = {
+            "Command": e.cmd,
+            "Exit Code": e.returncode,
+            "Terminal Output": f"```\n{terminal_output}\n```"
+        }
+        report_error("檢查 yt-dlp 版本失敗。", context=context)
     except Exception:
+        # 捕獲其他錯誤，如 requests 失敗
         report_error("檢查 yt-dlp 版本失敗。", context={"Traceback": traceback.format_exc()})
 
 
@@ -144,7 +164,7 @@ def handle_updates_and_cleanup(caller_script: str):
                 [sys.executable, updater_script_name, caller_script, DISCORD_WEBHOOK])
             sys.exit(0)
         else:
-            print("您目前使用的是最新版本。")
+            print("您目前使用的是最新版本。" )
     except Exception:
         report_error(traceback.format_exc())
 
@@ -206,24 +226,35 @@ class Video:
             ]
             process = subprocess.Popen(
                 args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+
+            stdout_lines = []
+            stderr_lines = []
+
+            def stream_reader(stream, line_list, output_file):
+                for line in iter(stream.readline, ''):
+                    line_list.append(line)
+                    print(line.strip(), file=output_file)
+                stream.close()
+
+            import threading
+            stdout_thread = threading.Thread(target=stream_reader, args=(process.stdout, stdout_lines, sys.stdout))
+            stderr_thread = threading.Thread(target=stream_reader, args=(process.stderr, stderr_lines, sys.stderr))
+
+            stdout_thread.start()
+            stderr_thread.start()
+
+            stdout_thread.join()
+            stderr_thread.join()
             
-            # Print stdout in real-time to show progress
-            while True:
-                line = process.stdout.readline()
-                if not line:
-                    break
-                print(line.strip())
-            
-            # Wait for the process to finish and capture stderr
             process.wait()
-            stderr_output = process.stderr.read()
 
             if process.returncode != 0:
-                error_details = stderr_output.strip()
-                # Print the detailed error to the local console for immediate feedback
-                print(f"[ERROR] Detailed yt-dlp Error:\n{error_details}", file=sys.stderr)
+                terminal_output = "".join(stdout_lines) + "".join(stderr_lines)
+                context_with_output = {**context, "Terminal Output": f"```\n{terminal_output[:1500]}\n```"}
                 report_error(
-                    f"Download failed. yt-dlp exited with code {process.returncode}\n---\n{error_details}", context=context)
+                    f"Download failed. yt-dlp exited with code {process.returncode}",
+                    context=context_with_output
+                )
                 return False
 
             try:
@@ -231,7 +262,7 @@ class Video:
                 print(
                     f"Metafile for '{self.meta.get('title', 'N/A')}' deleted.")
             except OSError as e:
-                report_error(f"CRITICAL: Failed to delete metafile {self.meta_filepath} after successful download.", context={
+                report_error(f"CRITICAL: Failed to delete metafile {self.meta_filepath} after successful download.", context= {
                              "Error": str(e)})
                 return False
             return True
@@ -249,10 +280,31 @@ def dl_meta_from_url(url: str):
                 os.path.join(META_DIR, f"%(title)s.%(id)s"), '--write-info-json', '--encoding', 'utf-8', url]
         if '/playlist' not in urlparse(url).path:
             args.append('--no-playlist')
-        subprocess.run(args, check=True)
-    except Exception:
-        report_error(f"Failed to download metadata.", context= {
-                     "Traceback": traceback.format_exc(), **context})
+
+        # 使用 subprocess.run 並捕獲輸出
+        process = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+
+        # 如果有輸出，則打印
+        if process.stdout:
+            print(process.stdout.strip())
+        if process.stderr:
+            print(process.stderr.strip(), file=sys.stderr)
+
+        # 手動檢查返回碼，如果失敗則報告錯誤
+        if process.returncode != 0:
+            terminal_output = f"--- STDOUT ---\n{process.stdout}\n\n--- STDERR ---\n{process.stderr}"
+            context_with_output = {**context, "Terminal Output": f"```\n{terminal_output[:1500]}\n```"}
+            report_error(
+                f"Failed to download metadata. yt-dlp exited with code {process.returncode}",
+                context=context_with_output
+            )
+    except Exception as e:
+        # 捕獲其他可能的錯誤，例如 FileNotFoundError
+        report_error(f"An unexpected error occurred while trying to get metadata.", context= {
+            "URL": url,
+            "Error": str(e),
+            "Traceback": traceback.format_exc()
+        })
 
 def load_videos_from_meta() -> list[Video]:
     if not os.path.isdir(META_DIR):
@@ -292,7 +344,7 @@ def cleanup():
             os.rmdir(META_DIR)
             print("Empty meta directory deleted.")
         except OSError as e:
-            report_error(f"Error deleting empty meta directory: {META_DIR}", context={
+            report_error(f"Error deleting empty meta directory: {META_DIR}", context= {
                          "Error": str(e)})
 
 def main():
@@ -300,7 +352,7 @@ def main():
         if __version__ != "dev":
             handle_updates_and_cleanup(sys.argv[0])
         else:
-            print("開發版本，跳過更新與清理程序。")
+            print("開發版本，跳過更新與清理程序。 সন")
         while True:
             parse_user_action()
             videos = load_videos_from_meta()
