@@ -13,7 +13,7 @@ import base64
 # --- Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.09.14"
+__version__ = "v2025.09.14.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End Versioning ---
@@ -206,16 +206,25 @@ class Video:
                 '--load-info-json', self.meta_filepath
             ]
             process = subprocess.Popen(
-                args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='ignore')
+                args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+            
+            # Print stdout in real-time to show progress
             while True:
                 line = process.stdout.readline()
                 if not line:
                     break
                 print(line.strip())
+            
+            # Wait for the process to finish and capture stderr
             process.wait()
+            stderr_output = process.stderr.read()
+
             if process.returncode != 0:
+                error_details = stderr_output.strip()
+                # Print the detailed error to the local console for immediate feedback
+                print(f"[ERROR] Detailed yt-dlp Error:\n{error_details}", file=sys.stderr)
                 report_error(
-                    f"Download failed. yt-dlp exited with code {process.returncode}", context=context)
+                    f"Download failed. yt-dlp exited with code {process.returncode}\n---\n{error_details}", context=context)
                 return False
 
             try:
