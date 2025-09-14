@@ -13,7 +13,7 @@ import base64
 # --- Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.09.14.01"
+__version__ = "v2025.09.14"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End Versioning ---
@@ -144,7 +144,7 @@ def handle_updates_and_cleanup(caller_script: str):
                 [sys.executable, updater_script_name, caller_script, DISCORD_WEBHOOK])
             sys.exit(0)
         else:
-            print("您目前使用的是最新版本。" )
+            print("您目前使用的是最新版本。")
     except Exception:
         report_error(traceback.format_exc())
 
@@ -189,7 +189,6 @@ class Video:
         try:
             args = [
                 EXECUTABLE,
-                '--verbose',
                 '-f', 'bv+ba',
                 '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr',
                 '--embed-subs',
@@ -232,7 +231,7 @@ class Video:
                 print(
                     f"Metafile for '{self.meta.get('title', 'N/A')}' deleted.")
             except OSError as e:
-                report_error(f"CRITICAL: Failed to delete metafile {self.meta_filepath} after successful download.", context= {
+                report_error(f"CRITICAL: Failed to delete metafile {self.meta_filepath} after successful download.", context={
                              "Error": str(e)})
                 return False
             return True
@@ -246,7 +245,7 @@ def dl_meta_from_url(url: str):
     try:
         if not os.path.exists(META_DIR):
             os.makedirs(META_DIR)
-        args = [EXECUTABLE, '--verbose', '--no-download', '--no-write-playlist-metafiles', '-o',
+        args = [EXECUTABLE, '--no-download', '--no-write-playlist-metafiles', '-o',
                 os.path.join(META_DIR, f"%(title)s.%(id)s"), '--write-info-json', '--encoding', 'utf-8', url]
         if '/playlist' not in urlparse(url).path:
             args.append('--no-playlist')
@@ -293,7 +292,7 @@ def cleanup():
             os.rmdir(META_DIR)
             print("Empty meta directory deleted.")
         except OSError as e:
-            report_error(f"Error deleting empty meta directory: {META_DIR}", context= {
+            report_error(f"Error deleting empty meta directory: {META_DIR}", context={
                          "Error": str(e)})
 
 def main():
@@ -301,7 +300,7 @@ def main():
         if __version__ != "dev":
             handle_updates_and_cleanup(sys.argv[0])
         else:
-            print("開發版本，跳過更新與清理程序。" )
+            print("開發版本，跳過更新與清理程序。")
         while True:
             parse_user_action()
             videos = load_videos_from_meta()
