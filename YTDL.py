@@ -13,7 +13,7 @@ import base64
 # --- Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.10.05"
+__version__ = "v2025.10.16"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End Versioning ---
@@ -207,48 +207,42 @@ class Video:
         context = {"Video Title": self.meta.get(
             'title', 'N/A'), "Video URL": self.meta.get('webpage_url', 'N/A')}
         try:
-            # --- First Attempt ---
             args = [EXECUTABLE, '-f', 'bv+ba', '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr', '--embed-subs', '--sub-langs', 'all,-live_chat', '--embed-thumbnail',
                     '--embed-metadata', '--merge-output-format', 'mkv', '--remux-video', 'mkv', '--encoding', 'utf-8', '--concurrent-fragments', CONCURRENT_FRAGMENTS, '--progress-delta', PROGRESS_BAR_SECONDS, '-o', self.template, self.url]
+            
             process = subprocess.Popen(
-                args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='ignore')
+                args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
 
-            first_run_log = ""
-            while True:
-                line = process.stdout.readline()
-                if not line:
-                    break
-                print(line.strip())
-                first_run_log += line
+            stdout_lines = []
+            stderr_lines = []
+
+            def stream_reader(stream, line_list, output_file):
+                for line in iter(stream.readline, ''):
+                    line_list.append(line)
+                    print(line.strip(), file=output_file)
+                stream.close()
+
+            import threading
+            stdout_thread = threading.Thread(target=stream_reader, args=(process.stdout, stdout_lines, sys.stdout))
+            stderr_thread = threading.Thread(target=stream_reader, args=(process.stderr, stderr_lines, sys.stderr))
+
+            stdout_thread.start()
+            stderr_thread.start()
+
+            stdout_thread.join()
+            stderr_thread.join()
+            
             process.wait()
 
             if process.returncode == 0:
                 os.remove(self.meta_filepath)
                 return
 
-            # --- If download failed, retry with --verbose ---
-            print("\n--- Download failed. Retrying with verbose logging... ---\n")
-            verbose_args = args + ['--verbose']
-            process_verbose = subprocess.Popen(
-                verbose_args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='ignore')
-
-            verbose_run_log = ""
-            while True:
-                line = process_verbose.stdout.readline()
-                if not line:
-                    break
-                print(line.strip())
-                verbose_run_log += line
-            process_verbose.wait()
-
-            # --- Report both logs ---
-            error_message = (
-                f"Download failed with exit code {process.returncode} on the first attempt, and {process_verbose.returncode} on the verbose retry.\n\n"
-                f"--- LOG FROM INITIAL ATTEMPT ---\n"
-                f"{first_run_log}\n\n"
-                f"--- LOG FROM VERBOSE RETRY ---\n"
-                f"{verbose_run_log}"
-            )
+            # If download failed, report error with full log
+            full_log = "".join(stdout_lines) + "".join(stderr_lines)
+            error_message = f"Download failed. yt-dlp exited with code {process.returncode}."
+            
+            context['Terminal Log'] = f"```\n{full_log[:1500]}\n```"
             report_error(error_message, context=context)
 
         except Exception:
@@ -321,7 +315,7 @@ def parse_user_action():
         else:
             print("Invalid URL. Please enter a valid YouTube URL.")
 
-def cleanup():
+def cleanup_empty_meta_dir():
     if os.path.isdir(META_DIR) and not os.listdir(META_DIR):
         try:
             os.rmdir(META_DIR)
@@ -335,7 +329,7 @@ def main():
         if __version__ != "dev":
             handle_updates_and_cleanup(sys.argv[0])
         else:
-            print("開發版本，跳過更新與清理程序。 সন")
+            print("開發版本，跳過更新與清理程序。")
         while True:
             parse_user_action()
             videos = load_videos_from_meta()
@@ -345,7 +339,7 @@ def main():
             for vid in videos:
                 vid.download()
 
-            cleanup()
+            cleanup_empty_meta_dir()
 
             print("\nAll downloads complete. You can enter another URL or type 'exit'.")
     except SystemExit:
