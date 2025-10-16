@@ -207,70 +207,53 @@ class Video:
         context = {"Video Title": self.meta.get(
             'title', 'N/A'), "Video URL": self.meta.get('webpage_url', 'N/A')}
         try:
-            args = [
-                EXECUTABLE,
-                '-f', 'bv+ba',
-                '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr',
-                '--embed-subs',
-                '--sub-langs', 'all,-live_chat',
-                '--no-playlist',
-                '--embed-thumbnail',
-                '--embed-metadata',
-                '--merge-output-format', 'mkv',
-                '--remux-video', 'mkv',
-                '--encoding', 'utf-8',
-                '--concurrent-fragments', CONCURRENT_FRAGMENTS,
-                '--progress-delta', PROGRESS_BAR_SECONDS,
-                '-o', self.template,
-                '--load-info-json', self.meta_filepath
-            ]
+            # --- First Attempt ---
+            args = [EXECUTABLE, '-f', 'bv+ba', '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr', '--embed-subs', '--sub-langs', 'all,-live_chat', '--embed-thumbnail',
+                    '--embed-metadata', '--merge-output-format', 'mkv', '--remux-video', 'mkv', '--encoding', 'utf-8', '--concurrent-fragments', CONCURRENT_FRAGMENTS, '--progress-delta', PROGRESS_BAR_SECONDS, '-o', self.template, self.url]
             process = subprocess.Popen(
-                args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+                args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='ignore')
 
-            stdout_lines = []
-            stderr_lines = []
-
-            def stream_reader(stream, line_list, output_file):
-                for line in iter(stream.readline, ''):
-                    line_list.append(line)
-                    print(line.strip(), file=output_file)
-                stream.close()
-
-            import threading
-            stdout_thread = threading.Thread(target=stream_reader, args=(process.stdout, stdout_lines, sys.stdout))
-            stderr_thread = threading.Thread(target=stream_reader, args=(process.stderr, stderr_lines, sys.stderr))
-
-            stdout_thread.start()
-            stderr_thread.start()
-
-            stdout_thread.join()
-            stderr_thread.join()
-            
+            first_run_log = ""
+            while True:
+                line = process.stdout.readline()
+                if not line:
+                    break
+                print(line.strip())
+                first_run_log += line
             process.wait()
 
-            if process.returncode != 0:
-                terminal_output = "".join(stdout_lines) + "".join(stderr_lines)
-                context_with_output = {**context, "Terminal Output": f"```\n{terminal_output[:1500]}\n```"}
-                report_error(
-                    f"Download failed. yt-dlp exited with code {process.returncode}",
-                    context=context_with_output
-                )
-                return False
-
-            try:
+            if process.returncode == 0:
                 os.remove(self.meta_filepath)
-                print(
-                    f"Metafile for '{self.meta.get('title', 'N/A')}' deleted.")
-            except OSError as e:
-                report_error(f"CRITICAL: Failed to delete metafile {self.meta_filepath} after successful download.", context= {
-                             "Error": str(e)})
-                return False
-            return True
-        except Exception:
-            report_error(f"An unexpected error occurred during download.", context= {
-                         "Traceback": traceback.format_exc(), **context})
-            return False
+                return
 
+            # --- If download failed, retry with --verbose ---
+            print("\n--- Download failed. Retrying with verbose logging... ---\n")
+            verbose_args = args + ['--verbose']
+            process_verbose = subprocess.Popen(
+                verbose_args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='ignore')
+
+            verbose_run_log = ""
+            while True:
+                line = process_verbose.stdout.readline()
+                if not line:
+                    break
+                print(line.strip())
+                verbose_run_log += line
+            process_verbose.wait()
+
+            # --- Report both logs ---
+            error_message = (
+                f"Download failed with exit code {process.returncode} on the first attempt, and {process_verbose.returncode} on the verbose retry.\n\n"
+                f"--- LOG FROM INITIAL ATTEMPT ---\n"
+                f"{first_run_log}\n\n"
+                f"--- LOG FROM VERBOSE RETRY ---\n"
+                f"{verbose_run_log}"
+            )
+            report_error(error_message, context=context)
+
+        except Exception:
+            report_error(f"An unexpected error occurred during download.", context={
+                         "Traceback": traceback.format_exc(), **context})
 def dl_meta_from_url(url: str):
     context = {"URL": url}
     try:
