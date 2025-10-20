@@ -13,7 +13,7 @@ import base64
 # --- Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.10.16"
+__version__ = "v2025.10.20"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End Versioning ---
@@ -39,8 +39,8 @@ PROGRESS_BAR_SECONDS = "2"
 
 def report_error(message: str, context: dict = None):
     """
-    Prints the error message to the console and sends it to a Discord webhook if configured,
-    including computer and execution context.
+    Prints the error message to the console and sends it to a Discord webhook if configured.
+    If a log or traceback is present in the context, it's sent as a file attachment.
     """
     # --- Gather Context Information ---
     try:
@@ -49,36 +49,70 @@ def report_error(message: str, context: dict = None):
         user = os.environ.get("USERNAME", "N/A")
     computer_info = f"**Computer:** `{socket.gethostname()}` (`{user}`) | **OS:** `{platform.system()} {platform.release()}` | **Ver:** `{__version__}`"
 
-    # --- Build Message ---
     full_message = f"{message}"
+    log_content = None
+    log_key = None
+
+    # --- Identify and Extract Log Content ---
+    if context:
+        # Find a key that contains a log or traceback
+        for key, value in context.items():
+            is_log = str(value).startswith("```")
+            is_traceback = key == "Traceback"
+            if (is_log or is_traceback):
+                log_key = key
+                if is_log:
+                    log_content = re.sub(r'```(.*?)\n|```', '', str(value), flags=re.DOTALL)
+                else:  # is_traceback
+                    log_content = str(value)
+                break  # Found a log, stop searching
+
+    # --- Build Context Message ---
     context_message = ""
     if context:
-        for key, value in context.items():
-            # 如果值以 '```' 開頭，我們假設它是一個預格式化的程式碼區塊
-            if str(value).startswith("```"):
-                context_message += f"**{key}:**\n{value}\n"
-            else:
-                context_message += f"**{key}:** `{value}`\n"
+        temp_context = context.copy()
+        if log_key:
+            # Replace log in context with a placeholder
+            del temp_context[log_key]
+            context_message += f"**{log_key}:** See attached `{log_key.replace(' ', '_').lower()}.txt`\n"
+
+        for key, value in temp_context.items():
+            context_message += f"**{key}:** `{value}`\n"
 
     # --- Print to Console ---
     print(
         f"[ERROR] An error occurred:\n{computer_info}\n{context_message}{full_message}", file=sys.stderr)
+    if log_content:
+        print(f"--- Full {log_key} Log ---\n{log_content}", file=sys.stderr)
 
     # --- Send to Discord ---
     if DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in DISCORD_WEBHOOK:
+        log_filename = None
         try:
-            # 組裝 Discord payload
             final_report = f"🚨 **YTDL Error Report:**\n{computer_info}\n{context_message}**Error:**\n```\n{full_message}\n```"
-            
-            # 如果報告太長，從尾部裁剪以確保它在 Discord 的限制內
-            if len(final_report) > 2000:
-                final_report = final_report[:1990] + "...```"
-
             discord_payload = {"content": final_report}
-            requests.post(DISCORD_WEBHOOK, json=discord_payload, timeout=10)
+
+            if log_content:
+                log_filename = f"{log_key.replace(' ', '_').lower()}.txt"
+                with open(log_filename, "w", encoding="utf-8") as f:
+                    f.write(log_content)
+
+                with open(log_filename, "rb") as log_file_stream:
+                    files = {"file": (log_filename, log_file_stream, "text/plain")}
+                    response = requests.post(DISCORD_WEBHOOK, data={
+                                             "payload_json": json.dumps(discord_payload)}, files=files, timeout=10)
+            else:
+                response = requests.post(
+                    DISCORD_WEBHOOK, json=discord_payload, timeout=10)
+
+            response.raise_for_status()
+
         except Exception as e:
             print(
                 f"[CRITICAL] Failed to send error report to Discord: {e}", file=sys.stderr)
+        finally:
+            if log_filename and os.path.exists(log_filename):
+                os.remove(log_filename)
 
 
 def send_discord_notification(message: str):
@@ -198,18 +232,13 @@ class Video:
             with open(self.meta_filepath, 'r', encoding='utf-8') as f:
                 return json.loads(f.read())
         except Exception:
-            report_error(f"Failed to read or parse meta file: {self.meta_filepath}", context= {
+            report_error(f"Failed to read or parse meta file: {self.meta_filepath}", context={
                          "Traceback": traceback.format_exc()})
             return {}
 
-    def download(self):
-        print(f"--- Downloading: {self.meta.get('title', 'N/A')} ---")
-        context = {"Video Title": self.meta.get(
-            'title', 'N/A'), "Video URL": self.meta.get('webpage_url', 'N/A')}
+    def _run_subprocess(self, args: list, context: dict):
+        """Helper to run a subprocess and stream its output."""
         try:
-            args = [EXECUTABLE, '-f', 'bv+ba', '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr', '--embed-subs', '--sub-langs', 'all,-live_chat', '--embed-thumbnail',
-                    '--embed-metadata', '--merge-output-format', 'mkv', '--remux-video', 'mkv', '--encoding', 'utf-8', '--concurrent-fragments', CONCURRENT_FRAGMENTS, '--progress-delta', PROGRESS_BAR_SECONDS, '-o', self.template, self.url]
-            
             process = subprocess.Popen(
                 args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
 
@@ -223,26 +252,54 @@ class Video:
                 stream.close()
 
             import threading
-            stdout_thread = threading.Thread(target=stream_reader, args=(process.stdout, stdout_lines, sys.stdout))
-            stderr_thread = threading.Thread(target=stream_reader, args=(process.stderr, stderr_lines, sys.stderr))
+            stdout_thread = threading.Thread(
+                target=stream_reader, args=(process.stdout, stdout_lines, sys.stdout))
+            stderr_thread = threading.Thread(
+                target=stream_reader, args=(process.stderr, stderr_lines, sys.stderr))
 
             stdout_thread.start()
             stderr_thread.start()
 
             stdout_thread.join()
             stderr_thread.join()
-            
+
             process.wait()
 
-            if process.returncode == 0:
+            full_log = "".join(stdout_lines) + "".join(stderr_lines)
+            return process.returncode, full_log
+        except Exception:
+            report_error(f"An unexpected error occurred during subprocess execution.", context={
+                         "Traceback": traceback.format_exc(), **context})
+            return -1, traceback.format_exc()
+
+    def download(self):
+        print(f"--- Downloading: {self.meta.get('title', 'N/A')} ---")
+        context = {"Video Title": self.meta.get(
+            'title', 'N/A'), "Video URL": self.meta.get('webpage_url', 'N/A')}
+        try:
+            args = [EXECUTABLE, '-f', 'bv+ba', '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr', '--embed-subs', '--sub-langs', 'all,-live_chat', '--embed-thumbnail',
+                    '--embed-metadata', '--merge-output-format', 'mkv', '--remux-video', 'mkv', '--encoding', 'utf-8', '--concurrent-fragments', CONCURRENT_FRAGMENTS, '--progress-delta', PROGRESS_BAR_SECONDS, '-o', self.template, self.url]
+
+            returncode, full_log = self._run_subprocess(args, context)
+
+            if returncode == 0:
                 os.remove(self.meta_filepath)
                 return
 
-            # If download failed, report error with full log
-            full_log = "".join(stdout_lines) + "".join(stderr_lines)
-            error_message = f"Download failed. yt-dlp exited with code {process.returncode}."
-            
-            context['Terminal Log'] = f"```\n{full_log[:1500]}\n```"
+            # If download failed, retry with --verbose
+            print(
+                f"--- Download failed with code {returncode}. Retrying with --verbose... ---")
+            args.append('--verbose')
+            returncode, full_log = self._run_subprocess(args, context)
+
+            if returncode == 0:
+                os.remove(self.meta_filepath)
+                return
+
+            # If download failed again, report error
+            error_message = f"Download failed again with --verbose. yt-dlp exited with code {returncode}."
+
+            context['Terminal Log'] = f"```\n{full_log[:8000]}\n```"
             report_error(error_message, context=context)
 
         except Exception:
@@ -258,26 +315,43 @@ def dl_meta_from_url(url: str):
         if '/playlist' not in urlparse(url).path:
             args.append('--no-playlist')
 
-        # 使用 subprocess.run 並捕獲輸出
-        process = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+        # 第一次嘗試
+        process = subprocess.run(
+            args, capture_output=True, text=True, encoding='utf-8', errors='ignore')
 
-        # 如果有輸出，則打印
+        # 如果成功，打印輸出並返回
+        if process.returncode == 0:
+            if process.stdout:
+                print(process.stdout.strip())
+            if process.stderr:
+                print(process.stderr.strip(), file=sys.stderr)
+            return
+
+        # 如果失敗，則使用 --verbose 重試
+        print(
+            f"--- Metadata download failed with code {process.returncode}. Retrying with --verbose... ---")
+        args.append('--verbose')
+        process = subprocess.run(
+            args, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+
+        # 第二次嘗試，無論成功與否都打印輸出
         if process.stdout:
             print(process.stdout.strip())
         if process.stderr:
             print(process.stderr.strip(), file=sys.stderr)
 
-        # 手動檢查返回碼，如果失敗則報告錯誤
+        # 如果再次失敗，報告錯誤
         if process.returncode != 0:
             terminal_output = f"--- STDOUT ---\n{process.stdout}\n\n--- STDERR ---\n{process.stderr}"
-            context_with_output = {**context, "Terminal Output": f"```\n{terminal_output[:1500]}\n```"}
+            context_with_output = {
+                **context, "Terminal Output": f"```\n{terminal_output[:8000]}\n```"}
             report_error(
-                f"Failed to download metadata. yt-dlp exited with code {process.returncode}",
+                f"Failed to download metadata again with --verbose. yt-dlp exited with code {process.returncode}",
                 context=context_with_output
             )
     except Exception as e:
         # 捕獲其他可能的錯誤，例如 FileNotFoundError
-        report_error(f"An unexpected error occurred while trying to get metadata.", context= {
+        report_error(f"An unexpected error occurred while trying to get metadata.", context={
             "URL": url,
             "Error": str(e),
             "Traceback": traceback.format_exc()
