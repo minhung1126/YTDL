@@ -15,7 +15,7 @@ sys.dont_write_bytecode = True
 # --- App Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.10.24"
+__version__ = "v2025.10.25"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End App Versioning ---
@@ -138,47 +138,7 @@ def send_discord_notification(message: str):
             print(f"[警告] 發送通知到 Discord 失敗: {e}", file=sys.stderr)
 
 
-def check_yt_dlp_update():
-    """
-    檢查是否有新版本的 yt-dlp 可用（不更新），並在需要時發送通知。
-    """
-    print("正在檢查 yt-dlp 是否有新版本...")
-    try:
-        # 1. 取得本機目前版本
-        local_version_proc = subprocess.run([EXECUTABLE, '--version'], capture_output=True, text=True, check=True, encoding='utf-8')
-        local_version = local_version_proc.stdout.strip()
 
-        # 2. 從 GitHub 取得最新版本
-        repo = "yt-dlp/yt-dlp"
-        api_url = f"https://api.github.com/repos/{repo}/releases/latest"
-        response = requests.get(api_url, timeout=5)
-        response.raise_for_status()
-        release_data = response.json()
-        latest_version = release_data["tag_name"]
-        release_url = release_data["html_url"]
-
-        # 3. 比較並通知
-        print(f"本機 yt-dlp 版本: {local_version}, 最新版本: {latest_version}")
-        if local_version != latest_version:
-            print(f"發現新的 yt-dlp 版本: {latest_version}")
-            send_discord_notification(f"發現新的 `yt-dlp` 版本！\n- 目前版本: `{local_version}`\n- 最新版本: `{latest_version}`\n- Release URL: {release_url}")
-        else:
-            print("您的 yt-dlp 已是最新版本。")
-
-    except FileNotFoundError:
-        print(f"[警告] 找不到 '{EXECUTABLE}'。無法檢查 yt-dlp 更新。", file=sys.stderr)
-    except subprocess.CalledProcessError as e:
-        # 如果 yt-dlp --version 命令失敗，報告詳細錯誤
-        terminal_output = f"--- STDOUT ---\n{e.stdout}\n\n--- STDERR ---\n{e.stderr}"
-        context = {
-            "Command": e.cmd,
-            "Exit Code": e.returncode,
-            "Terminal Output": f"```\n{terminal_output}\n```"
-        }
-        report_error("檢查 yt-dlp 版本失敗。", context=context)
-    except Exception:
-        # 捕獲其他錯誤，如 requests 失敗
-        report_error("檢查 yt-dlp 版本失敗。", context={"Traceback": traceback.format_exc()})
 
 
 def handle_updates_and_cleanup(caller_script: str):
