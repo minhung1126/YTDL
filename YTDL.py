@@ -15,7 +15,7 @@ sys.dont_write_bytecode = True
 # --- App Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.10.25.01"
+__version__ = "v2025.10.25.02"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End App Versioning ---
@@ -205,7 +205,7 @@ class Video:
             return {}
 
     def _run_subprocess(self, args: list, context: dict):
-        """Helper to run a subprocess and stream its output."""
+        """Helper to run a subprocess and stream its output, hiding debug messages."""
         try:
             process = subprocess.Popen(
                 args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
@@ -216,7 +216,8 @@ class Video:
             def stream_reader(stream, line_list, output_file):
                 for line in iter(stream.readline, ''):
                     line_list.append(line)
-                    print(line.strip(), file=output_file)
+                    if '[debug]' not in line:
+                        print(line.strip(), file=output_file)
                 stream.close()
 
             import threading
@@ -245,8 +246,23 @@ class Video:
         context = {"Video Title": self.meta.get(
             'title', 'N/A'), "Video URL": self.meta.get('webpage_url', 'N/A')}
         try:
-            args = [EXECUTABLE, '-f', 'bv+ba', '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr', '--embed-subs', '--sub-langs', 'all,-live_chat', '--embed-thumbnail',
-                    '--embed-metadata', '--merge-output-format', 'mkv', '--remux-video', 'mkv', '--encoding', 'utf-8', '--concurrent-fragments', CONCURRENT_FRAGMENTS, '--progress-delta', PROGRESS_BAR_SECONDS, '-o', self.template, self.url]
+            args = [
+                EXECUTABLE,
+                '-f', 'bv+ba',
+                '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr',
+                '--embed-subs',
+                '--sub-langs',                 'all,-live_chat',
+                '--embed-thumbnail',
+                '--embed-metadata',
+                '--merge-output-format', 'mkv',
+                '--remux-video', 'mkv',
+                '--encoding', 'utf-8',
+                '--concurrent-fragments', CONCURRENT_FRAGMENTS,
+                '--progress-delta', PROGRESS_BAR_SECONDS,
+                '-o', self.template,
+                '--load-info-json', self.meta_filepath,
+                '--verbose'
+                ]
 
             returncode, full_log = self._run_subprocess(args, context)
 
@@ -254,20 +270,10 @@ class Video:
                 os.remove(self.meta_filepath)
                 return
 
-            # If download failed, retry with --verbose
-            print(
-                f"--- Download failed with code {returncode}. Retrying with --verbose... ---")
-            args.append('--verbose')
-            returncode, full_log = self._run_subprocess(args, context)
+            # If download failed, report error
+            error_message = f"Download failed. yt-dlp exited with code {returncode}."
 
-            if returncode == 0:
-                os.remove(self.meta_filepath)
-                return
-
-            # If download failed again, report error
-            error_message = f"Download failed again with --verbose. yt-dlp exited with code {returncode}."
-
-            context['Terminal Log'] = f"```\n{full_log[:8000]}\n```"
+            context['Terminal Log'] = f"```\n{full_log}\n```"
             report_error(error_message, context=context)
 
         except Exception:
@@ -279,44 +285,33 @@ def dl_meta_from_url(url: str):
         if not os.path.exists(META_DIR):
             os.makedirs(META_DIR)
         args = [EXECUTABLE, '--no-download', '--no-write-playlist-metafiles', '-o',
-                os.path.join(META_DIR, f"%(title)s.%(id)s"), '--write-info-json', '--encoding', 'utf-8', url]
+                os.path.join(META_DIR, f"%(title)s.%(id)s"), '--write-info-json', '--encoding', 'utf-8', '--verbose', url]
         if '/playlist' not in urlparse(url).path:
             args.append('--no-playlist')
 
-        # 第一次嘗試
         process = subprocess.run(
             args, capture_output=True, text=True, encoding='utf-8', errors='ignore')
 
-        # 如果成功，打印輸出並返回
         if process.returncode == 0:
+            # Filter out debug lines from stdout before printing
             if process.stdout:
-                print(process.stdout.strip())
+                for line in process.stdout.splitlines():
+                    if '[debug]' not in line:
+                        print(line)
             if process.stderr:
-                print(process.stderr.strip(), file=sys.stderr)
+                for line in process.stderr.splitlines():
+                    if '[debug]' not in line:
+                        print(line, file=sys.stderr)
             return
 
-        # 如果失敗，則使用 --verbose 重試
-        print(
-            f"--- Metadata download failed with code {process.returncode}. Retrying with --verbose... ---")
-        args.append('--verbose')
-        process = subprocess.run(
-            args, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-
-        # 第二次嘗試，無論成功與否都打印輸出
-        if process.stdout:
-            print(process.stdout.strip())
-        if process.stderr:
-            print(process.stderr.strip(), file=sys.stderr)
-
-        # 如果再次失敗，報告錯誤
-        if process.returncode != 0:
-            terminal_output = f"--- STDOUT ---\n{process.stdout}\n\n--- STDERR ---\n{process.stderr}"
-            context_with_output = {
-                **context, "Terminal Output": f"```\n{terminal_output[:8000]}\n```"}
-            report_error(
-                f"Failed to download metadata again with --verbose. yt-dlp exited with code {process.returncode}",
-                context=context_with_output
-            )
+        # If download failed, report error
+        terminal_output = f"--- STDOUT ---\n{process.stdout}\n\n--- STDERR ---\n{process.stderr}"
+        context_with_output = {
+            **context, "Terminal Output": f"```\n{terminal_output}\n```"}
+        report_error(
+            f"Failed to download metadata. yt-dlp exited with code {process.returncode}",
+            context=context_with_output
+        )
     except Exception as e:
         # 捕獲其他可能的錯誤，例如 FileNotFoundError
         report_error(f"An unexpected error occurred while trying to get metadata.", context={
