@@ -15,7 +15,7 @@ sys.dont_write_bytecode = True
 # --- App Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.10.25"
+__version__ = "v2025.10.25.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End App Versioning ---
@@ -173,10 +173,7 @@ def handle_updates_and_cleanup(caller_script: str):
     except Exception:
         report_error(traceback.format_exc())
 
-    # 2. 順便檢查 yt-dlp 的更新
-    check_yt_dlp_update()
-
-    # 3. 檢查並刪除 self_update.py (如果存在)
+    # 2. 檢查並刪除 self_update.py (如果存在)
     updater_script_name = "self_update.py"
     updater_script_path = os.path.join(os.getcwd(), updater_script_name)
     if os.path.exists(updater_script_path):
