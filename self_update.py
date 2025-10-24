@@ -35,11 +35,49 @@ def report_error_updater(message: str, webhook_url: str):
         except Exception as e:
             print(f"[CRITICAL] Failed to send updater error report to Discord: {e}", file=sys.stderr)
 
-def program_files_update(webhook_url: str):
+def update_binary(YTDL_module, webhook_url: str):
+    """Updates binary dependencies like yt-dlp and deno based on versions in the YTDL module."""
+    # --- yt-dlp Update ---
     try:
-        cwd = os.getcwd()
-        api_url = "https://api.github.com/repos/minhung1126/YTDL"
+        yt_dlp_channel = YTDL_module.YT_DLP_VERSION_CHANNEL
+        yt_dlp_tag = YTDL_module.YT_DLP_VERSION_TAG
 
+        if yt_dlp_channel and yt_dlp_tag:
+            print(f"Updating yt-dlp to {yt_dlp_channel}@{yt_dlp_tag}...")
+            subprocess.run(['yt-dlp', '--update-to', f'{yt_dlp_channel}@{yt_dlp_tag}'], check=True)
+        else:
+            report_error_updater("yt-dlp version info is empty in YTDL.py. Skipping update.", webhook_url)
+
+    except AttributeError:
+         report_error_updater("Version variables for yt-dlp not found in YTDL.py. Skipping update.", webhook_url)
+    except subprocess.CalledProcessError as e:
+        report_error_updater(f"yt-dlp update failed: {e}", webhook_url)
+    except FileNotFoundError:
+        report_error_updater("`yt-dlp` command not found. Skipping yt-dlp update.", webhook_url)
+    except Exception:
+        report_error_updater(f"An unexpected error occurred during yt-dlp update.\n{traceback.format_exc()}", webhook_url)
+
+    # --- Deno Update ---
+    try:
+        deno_version = YTDL_module.DENO_VERSION
+        if deno_version:
+            print(f"Attempting to update deno to version {deno_version}...")
+            subprocess.run(['deno', 'upgrade', '--version', deno_version], check=True)
+            print("Deno update successful.")
+    except AttributeError:
+        print("DENO_VERSION not found in YTDL.py. Skipping Deno update.")
+    except subprocess.CalledProcessError as e:
+        report_error_updater(f"Deno upgrade failed: {e}", webhook_url)
+    except FileNotFoundError:
+        report_error_updater("`deno` command not found. Skipping Deno update.", webhook_url)
+    except Exception:
+        report_error_updater(f"An unexpected error occurred during Deno update.\n{traceback.format_exc()}", webhook_url)
+
+def program_files_update(webhook_url: str):
+    cwd = os.getcwd()
+    api_url = "https://api.github.com/repos/minhung1126/YTDL"
+
+    try:
         print("Fetching latest release information...")
         resp = requests.get(f"{api_url}/releases/latest", timeout=10)
         resp.raise_for_status()
@@ -52,10 +90,10 @@ def program_files_update(webhook_url: str):
         zipfile_content_resp.raise_for_status()
         zipfile_content = io.BytesIO(zipfile_content_resp.content)
 
-        must_extract_filenames = ['ytdlp_version_info.py']
         to_extract_filenames = ["YTDL.py", "YTDL_mul.py"]
-        
-        final_extract_list = [f for f in to_extract_filenames if os.path.exists(os.path.join(cwd, f))] + must_extract_filenames
+        final_extract_list = [f for f in to_extract_filenames if os.path.exists(os.path.join(cwd, f))]
+        if "YTDL.py" not in final_extract_list:
+            final_extract_list.append("YTDL.py")
 
         print("Extracting files...")
         with ZipFile(zipfile_content, 'r') as zipfile:
@@ -67,30 +105,36 @@ def program_files_update(webhook_url: str):
                     with open(os.path.join(cwd, filename), 'wb') as f:
                         f.write(file_content)
 
-        from ytdlp_version_info import YT_DLP_VERSION_CHANNEL, YT_DLP_VERSION_TAG
-        print(f"Updating yt-dlp to {YT_DLP_VERSION_CHANNEL}@{YT_DLP_VERSION_TAG}...")
-        subprocess.run(['yt-dlp', '--update-to', f'{YT_DLP_VERSION_CHANNEL}@{YT_DLP_VERSION_TAG}'], check=True)
-
-        os.remove('ytdlp_version_info.py')
-
-        print("==================================================")
-        print("Update process completed successfully.")
-        print("==================================================")
-
-        print("Cleaning up...")
-        if os.path.exists("__pycache__"):
-            try:
-                shutil.rmtree("__pycache__")
-                print("Removed __pycache__ directory.")
-            except OSError as e:
-                print(f"Error removing __pycache__: {e}")
-
-        return True
-
     except Exception:
-        error_message = f"An error occurred in program_files_update.\n{traceback.format_exc()}"
+        error_message = f"Failed to download or extract program files.\n{traceback.format_exc()}"
         report_error_updater(error_message, webhook_url)
         return False
+
+    try:
+        import YTDL
+        # Since this script is a separate process, we can safely import the newly downloaded module.
+        # If this script were part of a larger, long-running app, we'd use importlib.reload().
+    except ImportError:
+        report_error_updater(f"Failed to import the updated YTDL.py module.\n{traceback.format_exc()}", webhook_url)
+        return False
+
+    update_binary(YTDL, webhook_url)
+    
+    # --- Final Cleanup ---
+    print("==================================================")
+    print("Update process completed.")
+    print("Non-critical errors might have occurred. Please check the log.")
+    print("==================================================")
+
+    print("Cleaning up...")
+    if os.path.exists("__pycache__"):
+        try:
+            shutil.rmtree("__pycache__")
+            print("Removed __pycache__ directory.")
+        except OSError as e:
+            print(f"Error removing __pycache__: {e}")
+
+    return True
 
 def main():
     caller_script_path = sys.argv[1] if len(sys.argv) > 1 else None
@@ -106,8 +150,6 @@ def main():
     print("Update complete. Restarting application...")
     if caller_script_path and os.path.exists(caller_script_path):
         try:
-            # Replace the updater script process with the main application process.
-            # This is a cleaner way to restart, as it preserves the console and standard I/O.
             os.execv(sys.executable, [sys.executable, caller_script_path])
         except Exception:
             error_message = f"Failed to restart the application at {caller_script_path}.\n{traceback.format_exc()}"
