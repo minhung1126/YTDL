@@ -69,7 +69,43 @@ def update_binary(YTDL_module, webhook_url: str):
     except subprocess.CalledProcessError as e:
         report_error_updater(f"Deno upgrade failed: {e}", webhook_url)
     except FileNotFoundError:
-        report_error_updater("`deno` command not found. Skipping Deno update.", webhook_url)
+        print("`deno` command not found. Attempting to download it...")
+        try:
+            # At this point, deno_version should be defined from the outer try block
+            if not deno_version:
+                report_error_updater("Deno version is not specified in YTDL.py, cannot download.", webhook_url)
+                return
+
+            yt_dlp_path = shutil.which('yt-dlp')
+            if not yt_dlp_path:
+                report_error_updater("`yt-dlp` executable not found in PATH. Cannot determine installation directory for Deno.", webhook_url)
+                return
+
+            target_dir = os.path.dirname(yt_dlp_path)
+            print(f"Deno will be installed in the same directory as yt-dlp: {target_dir}")
+
+            if platform.system() != "Windows":
+                report_error_updater(f"Deno auto-installation is only supported on Windows. Your OS: {platform.system()}", webhook_url)
+                return
+
+            deno_zip_url = f"https://github.com/denoland/deno/releases/download/v{deno_version}/deno-x86_64-pc-windows-msvc.zip"
+            print(f"Downloading Deno for Windows from {deno_zip_url}...")
+
+            resp = requests.get(deno_zip_url, timeout=60)
+            resp.raise_for_status()
+
+            with ZipFile(io.BytesIO(resp.content)) as z:
+                print("Extracting deno.exe...")
+                z.extract('deno.exe', path=target_dir)
+            
+            deno_exe_path = os.path.join(target_dir, 'deno.exe')
+            if os.path.exists(deno_exe_path):
+                print(f"Deno successfully installed at {deno_exe_path}")
+            else:
+                raise FileNotFoundError("deno.exe not found after extraction.")
+
+        except Exception as install_e:
+            report_error_updater(f"Failed to download and install Deno.\n{install_e}\n{traceback.format_exc()}", webhook_url)
     except Exception:
         report_error_updater(f"An unexpected error occurred during Deno update.\n{traceback.format_exc()}", webhook_url)
 
