@@ -10,13 +10,24 @@ import platform
 import socket
 import base64
 
-# --- Versioning ---
+sys.dont_write_bytecode = True
+
+# --- App Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.10.23"
+__version__ = "v2025.10.24"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
-# --- End Versioning ---
+# --- End App Versioning ---
+
+# --- yt-dlp Versioning ---
+YT_DLP_VERSION_CHANNEL = "stable"
+YT_DLP_VERSION_TAG = "2025.10.22"
+# --- End yt-dlp Versioning ---
+
+# --- Deno Versioning ---
+DENO_VERSION = "2.5.4"
+# --- End Deno Versioning ---
 
 try:
     import requests
