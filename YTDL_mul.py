@@ -193,10 +193,7 @@ if __name__ == "__main__":
         # Clear clipboard at startup to avoid processing old URLs.
         pyperclip.copy('')
 
-        if YTDL.__version__ != "dev":
-            YTDL.handle_updates_and_cleanup(sys.argv[0])
-        else:
-            print("開發版本，跳過更新與清理程序。")
+        YTDL.initialize_app(sys.argv[0])
 
         root = tk.Tk()
         app = ClipboardWatcherApp(root)
