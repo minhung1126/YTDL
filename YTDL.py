@@ -15,7 +15,7 @@ sys.dont_write_bytecode = True
 # --- App Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.10.25.02"
+__version__ = "v2025.10.26"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End App Versioning ---
@@ -136,9 +136,6 @@ def send_discord_notification(message: str):
             requests.post(DISCORD_WEBHOOK, json=discord_payload, timeout=10)
         except Exception as e:
             print(f"[警告] 發送通知到 Discord 失敗: {e}", file=sys.stderr)
-
-
-
 
 
 def handle_updates_and_cleanup(caller_script: str):
@@ -279,6 +276,7 @@ class Video:
         except Exception:
             report_error(f"An unexpected error occurred during download.", context={
                          "Traceback": traceback.format_exc(), **context})
+
 def dl_meta_from_url(url: str):
     context = {"URL": url}
     try:
@@ -329,6 +327,7 @@ def load_videos_from_meta() -> list[Video]:
 def self_update_legacy():
     print("Manual update started...")
 
+
 def parse_user_action():
     if os.path.isdir(META_DIR) and os.listdir(META_DIR):
         resp = input("Meta files found. Continue downloading previous session?(Y/N) ").lower()
@@ -361,12 +360,20 @@ def cleanup_empty_meta_dir():
             report_error(f"Error deleting empty meta directory: {META_DIR}", context= {
                          "Error": str(e)})
 
+
+def initialize_app(caller_script_name: str):
+    """
+    檢查版本並處理更新（如果不是開發模式）。
+    """
+    if __version__ != "dev":
+        handle_updates_and_cleanup(caller_script_name)
+    else:
+        print("開發版本，跳過更新與清理程序。")
+
+
 def main():
     try:
-        if __version__ != "dev":
-            handle_updates_and_cleanup(sys.argv[0])
-        else:
-            print("開發版本，跳過更新與清理程序。")
+        initialize_app(sys.argv[0])
         while True:
             parse_user_action()
             videos = load_videos_from_meta()
