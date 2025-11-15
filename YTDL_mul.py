@@ -79,13 +79,6 @@ class ClipboardWatcherApp:
         instructions_label = ttk.Label(main_frame, text=UI_TEXT["instructions"], justify=tk.LEFT, relief=tk.RIDGE, padding="5", style="Instructions.TLabel")
         instructions_label.pack(fill=tk.X, pady=(0, 10))
 
-        url_frame = ttk.LabelFrame(main_frame, text=UI_TEXT["detected_urls"])
-        url_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-
-        self.url_text = scrolledtext.ScrolledText(url_frame, wrap=tk.WORD, height=15)
-        self.url_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.url_text.config(state=tk.DISABLED)
-
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=5)
 
@@ -94,6 +87,13 @@ class ClipboardWatcherApp:
 
         self.download_button = ttk.Button(button_frame, text=UI_TEXT["download_all"], command=self.start_download)
         self.download_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+
+        url_frame = ttk.LabelFrame(main_frame, text=UI_TEXT["detected_urls"])
+        url_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        self.url_text = scrolledtext.ScrolledText(url_frame, wrap=tk.WORD, height=15)
+        self.url_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.url_text.config(state=tk.DISABLED)
 
         self.status_var = tk.StringVar()
         self.status_var.set(UI_TEXT["status_ready"])
