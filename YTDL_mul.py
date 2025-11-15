@@ -19,7 +19,8 @@ except ImportError:
     # root.withdraw()
     # messagebox.showerror("依賴錯誤 | Dependency Error", "Pyperclip 函式庫未安裝.\n請在終端機執行 'pip install pyperclip'.")
     # sys.exit(1)
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "pyperclip"])
     import pyperclip
 
 
