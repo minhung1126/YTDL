@@ -4,6 +4,7 @@ import traceback
 import threading
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, font
+import subprocess
 
 import YTDL  # Import the core logic
 
@@ -13,11 +14,15 @@ sys.dont_write_bytecode = True
 try:
     import pyperclip
 except ImportError:
-    YTDL.report_error("Pyperclip library is not installed. Please run 'pip install pyperclip'.")
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showerror("依賴錯誤 | Dependency Error", "Pyperclip 函式庫未安裝.\n請在終端機執行 'pip install pyperclip'.")
-    sys.exit(1)
+    # YTDL.report_error("Pyperclip library is not installed. Please run 'pip install pyperclip'.")
+    # root = tk.Tk()
+    # root.withdraw()
+    # messagebox.showerror("依賴錯誤 | Dependency Error", "Pyperclip 函式庫未安裝.\n請在終端機執行 'pip install pyperclip'.")
+    # sys.exit(1)
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
+    import pyperclip
+
+
 
 # --- UI Text Dictionary ---
 UI_TEXT = {
