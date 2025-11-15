@@ -15,7 +15,7 @@ sys.dont_write_bytecode = True
 # --- App Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.11.15"
+__version__ = "v2025.11.15.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End App Versioning ---
@@ -181,6 +181,46 @@ def handle_updates_and_cleanup(caller_script: str):
             print(f"無法刪除 {updater_script_name}: {e}", file=sys.stderr)
 
 
+def _run_subprocess(args: list, context: dict = None):
+    """Helper to run a subprocess and stream its output, hiding debug messages."""
+    if context is None:
+        context = {}
+    try:
+        process = subprocess.Popen(
+            args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+
+        stdout_lines = []
+        stderr_lines = []
+
+        def stream_reader(stream, line_list, output_file):
+            for line in iter(stream.readline, ''):
+                line_list.append(line)
+                if '[debug]' not in line:
+                    print(line.strip(), file=output_file)
+            stream.close()
+
+        import threading
+        stdout_thread = threading.Thread(
+            target=stream_reader, args=(process.stdout, stdout_lines, sys.stdout))
+        stderr_thread = threading.Thread(
+            target=stream_reader, args=(process.stderr, stderr_lines, sys.stderr))
+
+        stdout_thread.start()
+        stderr_thread.start()
+
+        stdout_thread.join()
+        stderr_thread.join()
+
+        process.wait()
+
+        full_log = "".join(stdout_lines) + "".join(stderr_lines)
+        return process.returncode, full_log
+    except Exception:
+        report_error(f"An unexpected error occurred during subprocess execution.", context={
+                     "Traceback": traceback.format_exc(), **context})
+        return -1, traceback.format_exc()
+
+
 class Video:
     def __init__(self, meta_filepath: str):
         VIDEO_TEMPLATE = r"%(title)s.%(id)s.%(ext)s"
@@ -200,43 +240,6 @@ class Video:
             report_error(f"Failed to read or parse meta file: {self.meta_filepath}", context={
                          "Traceback": traceback.format_exc()})
             return {}
-
-    def _run_subprocess(self, args: list, context: dict):
-        """Helper to run a subprocess and stream its output, hiding debug messages."""
-        try:
-            process = subprocess.Popen(
-                args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
-
-            stdout_lines = []
-            stderr_lines = []
-
-            def stream_reader(stream, line_list, output_file):
-                for line in iter(stream.readline, ''):
-                    line_list.append(line)
-                    if '[debug]' not in line:
-                        print(line.strip(), file=output_file)
-                stream.close()
-
-            import threading
-            stdout_thread = threading.Thread(
-                target=stream_reader, args=(process.stdout, stdout_lines, sys.stdout))
-            stderr_thread = threading.Thread(
-                target=stream_reader, args=(process.stderr, stderr_lines, sys.stderr))
-
-            stdout_thread.start()
-            stderr_thread.start()
-
-            stdout_thread.join()
-            stderr_thread.join()
-
-            process.wait()
-
-            full_log = "".join(stdout_lines) + "".join(stderr_lines)
-            return process.returncode, full_log
-        except Exception:
-            report_error(f"An unexpected error occurred during subprocess execution.", context={
-                         "Traceback": traceback.format_exc(), **context})
-            return -1, traceback.format_exc()
 
     def download(self):
         print(f"--- Downloading: {self.meta.get('title', 'N/A')} ---")
@@ -261,7 +264,7 @@ class Video:
                 '--verbose'
                 ]
 
-            returncode, full_log = self._run_subprocess(args, context)
+            returncode, full_log = _run_subprocess(args, context)
 
             if returncode == 0:
                 os.remove(self.meta_filepath)
@@ -282,32 +285,30 @@ def dl_meta_from_url(url: str):
     try:
         if not os.path.exists(META_DIR):
             os.makedirs(META_DIR)
-        args = [EXECUTABLE, '--no-download', '--no-write-playlist-metafiles', '-o',
-                os.path.join(META_DIR, f"%(title)s.%(id)s"), '--write-info-json', '--encoding', 'utf-8', '--verbose', url]
+        args = [
+            EXECUTABLE,
+            '--no-download',
+            '--no-write-playlist-metafiles', '-o',
+            os.path.join(META_DIR, f"%(title)s.%(id)s"),
+            '--write-info-json',
+            '--encoding', 'utf-8',
+            '--verbose',
+            '--concurrent-fragments', CONCURRENT_FRAGMENTS,
+            url
+        ]
         if '/playlist' not in urlparse(url).path:
             args.append('--no-playlist')
 
-        process = subprocess.run(
-            args, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+        returncode, full_log = _run_subprocess(args, context)
 
-        if process.returncode == 0:
-            # Filter out debug lines from stdout before printing
-            if process.stdout:
-                for line in process.stdout.splitlines():
-                    if '[debug]' not in line:
-                        print(line)
-            if process.stderr:
-                for line in process.stderr.splitlines():
-                    if '[debug]' not in line:
-                        print(line, file=sys.stderr)
+        if returncode == 0:
             return
 
         # If download failed, report error
-        terminal_output = f"--- STDOUT ---\n{process.stdout}\n\n--- STDERR ---\n{process.stderr}"
         context_with_output = {
-            **context, "Terminal Output": f"```\n{terminal_output}\n```"}
+            **context, "Terminal Output": f"```\n{full_log}\n```"}
         report_error(
-            f"Failed to download metadata. yt-dlp exited with code {process.returncode}",
+            f"Failed to download metadata. yt-dlp exited with code {returncode}",
             context=context_with_output
         )
     except Exception as e:
