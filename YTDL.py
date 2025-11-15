@@ -15,7 +15,7 @@ sys.dont_write_bytecode = True
 # --- App Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.11.15.05"
+__version__ = "v2025.11.16"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End App Versioning ---
@@ -227,7 +227,18 @@ class Video:
         PLAYLIST_TEMPLATE = r"%(playlist)s/%(title)s.%(id)s.%(ext)s"
         self.meta_filepath = meta_filepath
         self.meta = self._read_meta()
-        self.template = PLAYLIST_TEMPLATE if self.meta and 'playlist' in self.meta else VIDEO_TEMPLATE
+        
+        # Check for playlist or channel to set the correct template
+        is_playlist = self.meta and 'playlist' in self.meta
+        
+        webpage_url = self.meta.get("webpage_url", "")
+        parsed_url = urlparse(webpage_url)
+        is_channel = '/channel/' in parsed_url.path or \
+                     '/c/' in parsed_url.path or \
+                     parsed_url.path.startswith('/@')
+        
+        self.template = PLAYLIST_TEMPLATE if is_playlist or is_channel else VIDEO_TEMPLATE
+        
         self.url = self.meta.get("webpage_url", "")
         if self.meta.get("playlist_id"):
             self.url += f"&list={self.meta.get('playlist_id')}"
@@ -296,7 +307,11 @@ def dl_meta_from_url(url: str):
             '--concurrent-fragments', CONCURRENT_FRAGMENTS,
             url
         ]
-        if '/playlist' not in urlparse(url).path:
+        parsed_url = urlparse(url)
+        is_playlist = '/playlist' in parsed_url.path
+        is_channel = '/channel/' in parsed_url.path or '/c/' in parsed_url.path or parsed_url.path.startswith('/@')
+
+        if not is_playlist and not is_channel:
             args.append('--no-playlist')
 
         returncode, full_log = _run_subprocess(args, context)
@@ -340,7 +355,7 @@ def parse_user_action():
             print("Invalid input. Exiting.")
             sys.exit(1)
     while True:
-        resp = input("Enter URL (or type 'exit' to quit, 'update' for manual update): ")
+        resp = input("Enter a video, playlist, or channel URL (or type 'exit' to quit, 'update' for manual update): ")
         if resp.lower() == 'exit':
             sys.exit(0)
         if resp.lower() == "update":
