@@ -7,6 +7,9 @@ from tkinter import ttk, scrolledtext, messagebox, font
 
 import YTDL  # Import the core logic
 
+sys.dont_write_bytecode = True
+
+
 try:
     import pyperclip
 except ImportError:
