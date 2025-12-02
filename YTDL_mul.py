@@ -50,7 +50,9 @@ UI_TEXT = {
     "msg_quit_title": "退出 | Quit",
     "msg_quit_body": "下載正在進行中，您確定要退出嗎？ | A download is in progress. Are you sure you want to quit?",
     "msg_fatal_error_title": "嚴重錯誤 | Fatal Error",
-    "msg_fatal_error_body": "啟動時發生嚴重錯誤，請檢查日誌。 | A critical error occurred on startup. Please check the logs."
+    "msg_fatal_error_body": "啟動時發生嚴重錯誤，請檢查日誌。 | A critical error occurred on startup. Please check the logs.",
+    "msg_resume_download_title": "繼續下載 | Resume Download",
+    "msg_resume_download_body": "偵測到未完成的下載任務，是否繼續？ | Unfinished downloads detected. Continue?"
 }
 
 class ClipboardWatcherApp:
@@ -67,7 +69,80 @@ class ClipboardWatcherApp:
 
         self.setup_widgets()
         self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Check for incomplete downloads in meta directory
+        self.check_and_handle_existing_meta()
 
+    def check_and_handle_existing_meta(self):
+        """Check if there are unfinished downloads and ask user if they want to continue."""
+        import os
+        import shutil
+        
+        if os.path.isdir(YTDL.META_DIR) and os.listdir(YTDL.META_DIR):
+            # Create custom dialog with proper button order (Cancel left, Continue right)
+            result = self._show_resume_dialog(
+                UI_TEXT["msg_resume_download_title"],
+                UI_TEXT["msg_resume_download_body"]
+            )
+            if not result:
+                # User chose not to continue, remove meta directory
+                try:
+                    shutil.rmtree(YTDL.META_DIR)
+                except Exception as e:
+                    YTDL.report_error(
+                        f"Failed to delete meta directory: {YTDL.META_DIR}",
+                        context={"Error": str(e)}
+                    )
+    
+    def _show_resume_dialog(self, title, message):
+        """Custom dialog with Continue (default) on right, Cancel on left."""
+        dialog = tk.Toplevel(self.master)
+        dialog.title(title)
+        dialog.transient(self.master)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.geometry("400x150")
+        dialog.resizable(False, False)
+        
+        # Message
+        msg_label = ttk.Label(dialog, text=message, wraplength=350, justify=tk.CENTER, padding="20")
+        msg_label.pack(expand=True)
+        
+        # Button frame
+        btn_frame = ttk.Frame(dialog, padding="10")
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        result = [False]  # Use list to allow modification in nested function
+        
+        def on_cancel():
+            result[0] = False
+            dialog.destroy()
+        
+        def on_continue():
+            result[0] = True
+            dialog.destroy()
+        
+        # Cancel button on the left
+        cancel_btn = ttk.Button(btn_frame, text="取消 | Cancel", command=on_cancel)
+        cancel_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        
+        # Continue button on the right (PRIMARY ACTION)
+        continue_btn = ttk.Button(btn_frame, text="繼續 | Continue", command=on_continue)
+        continue_btn.pack(side=tk.RIGHT, padx=5, expand=True, fill=tk.X)
+        
+        # Set Continue as default (focused) button
+        continue_btn.focus_set()
+        
+        # Bind Enter key to Continue
+        dialog.bind('<Return>', lambda e: on_continue())
+        dialog.bind('<Escape>', lambda e: on_cancel())
+        
+        # Wait for dialog to close
+        self.master.wait_window(dialog)
+        
+        return result[0]
+    
     def setup_widgets(self):
         main_frame = ttk.Frame(self.master, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
