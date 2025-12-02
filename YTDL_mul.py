@@ -95,7 +95,7 @@ class ClipboardWatcherApp:
                     )
     
     def _show_resume_dialog(self, title, message):
-        """Custom dialog with Continue (default) on right, Cancel on left."""
+        """Custom dialog with Continue (default) on left, Cancel on right (Windows convention)."""
         dialog = tk.Toplevel(self.master)
         dialog.title(title)
         dialog.transient(self.master)
@@ -123,13 +123,13 @@ class ClipboardWatcherApp:
             result[0] = True
             dialog.destroy()
         
-        # Cancel button on the left
-        cancel_btn = ttk.Button(btn_frame, text="取消 | Cancel", command=on_cancel)
-        cancel_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
-        
-        # Continue button on the right (PRIMARY ACTION)
+        # Continue button on the left (PRIMARY ACTION - Windows convention)
         continue_btn = ttk.Button(btn_frame, text="繼續 | Continue", command=on_continue)
-        continue_btn.pack(side=tk.RIGHT, padx=5, expand=True, fill=tk.X)
+        continue_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        
+        # Cancel button on the right
+        cancel_btn = ttk.Button(btn_frame, text="取消 | Cancel", command=on_cancel)
+        cancel_btn.pack(side=tk.RIGHT, padx=5, expand=True, fill=tk.X)
         
         # Set Continue as default (focused) button
         continue_btn.focus_set()
