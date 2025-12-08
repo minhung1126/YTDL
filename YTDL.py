@@ -15,14 +15,14 @@ sys.dont_write_bytecode = True
 # --- App Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.12.02.01"
+__version__ = "v2025.12.08"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End App Versioning ---
 
 # --- yt-dlp Versioning ---
 YT_DLP_VERSION_CHANNEL = "stable"
-YT_DLP_VERSION_TAG = "2025.11.12"
+YT_DLP_VERSION_TAG = "2025.12.08"
 # --- End yt-dlp Versioning ---
 
 # --- Deno Versioning ---
