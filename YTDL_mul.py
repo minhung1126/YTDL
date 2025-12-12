@@ -6,9 +6,13 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, font
 import subprocess
 
+import logging
 import YTDL  # Import the core logic
 
 sys.dont_write_bytecode = True
+
+# Initialize logging immediately
+YTDL.setup_logging()
 
 
 try:
@@ -198,7 +202,7 @@ class ClipboardWatcherApp:
             current_clipboard = pyperclip.paste()
             if current_clipboard:
                 import re
-                found_urls = re.findall(r'https?://(?:www\.)?(?:youtube\.com|youtu\.be)[/\w\-?=&@%]+', current_clipboard)
+                found_urls = re.findall(YTDL.YOUTUBE_REGEX, current_clipboard)
                 for url in found_urls:
                     if url not in self.detected_urls:
                         self.detected_urls.add(url)
