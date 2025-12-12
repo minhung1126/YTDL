@@ -220,6 +220,11 @@ class ClipboardWatcherApp:
         self.url_text.see(tk.END)
         self.url_text.config(state=tk.DISABLED)
 
+    def _schedule_error_popup(self, error_msg):
+        def show():
+            messagebox.showwarning("下載失敗 | Download Failed", f"錯誤原因 | Error Reason:\n{error_msg}")
+        self.master.after(0, show)
+
     def start_download(self):
         if self.download_thread and self.download_thread.is_alive():
             messagebox.showwarning(UI_TEXT["msg_download_in_progress_title"], UI_TEXT["msg_download_in_progress_body"])
@@ -246,7 +251,9 @@ class ClipboardWatcherApp:
         try:
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_processing_meta"].format(count=len(urls))))
             for url in urls:
-                YTDL.dl_meta_from_url(url)
+                success, error = YTDL.dl_meta_from_url(url)
+                if not success:
+                    self._schedule_error_popup(error)
 
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_meta_done"]))
             videos_to_download = YTDL.load_videos_from_meta()
@@ -254,7 +261,9 @@ class ClipboardWatcherApp:
             for i, video in enumerate(videos_to_download):
                 title = video.meta.get('title', 'N/A')[:25]
                 self.master.after(0, lambda i=i, t=title: self.status_var.set(UI_TEXT["status_downloading"].format(i=i+1, total=total_videos, title=t)))
-                video.download()
+                success, error = video.download()
+                if not success:
+                    self._schedule_error_popup(error)
 
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_all_done"]))
         except Exception:

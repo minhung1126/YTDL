@@ -17,7 +17,7 @@ sys.dont_write_bytecode = True
 # --- App Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.12.12"
+__version__ = "v2025.12.12.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End App Versioning ---
@@ -252,6 +252,29 @@ def _run_subprocess(args: list, context: dict = None):
         return -1, traceback.format_exc()
 
 
+def extract_yt_dlp_error(log_text: str) -> str:
+    """
+    Extracts the main error message from the yt-dlp log.
+    Returns the first line starting with 'ERROR:', or the last non-empty line.
+    """
+    if not log_text:
+        return "Unknown Error (No Log)"
+    
+    # Remove ANSI color codes
+    ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
+    
+    for line in log_text.splitlines():
+        clean_line = ansi_escape.sub('', line).strip()
+        if clean_line.startswith("ERROR:"):
+            return clean_line
+            
+    # Fallback: return the last non-empty line
+    lines = [ansi_escape.sub('', l).strip() for l in log_text.splitlines() if l.strip()]
+    if lines:
+        return lines[-1]
+    return "Unknown Error"
+
+
 class Video:
     def __init__(self, meta_filepath: str):
         VIDEO_TEMPLATE = r"%(title)s.%(id)s.%(ext)s"
@@ -310,17 +333,21 @@ class Video:
 
             if returncode == 0:
                 os.remove(self.meta_filepath)
-                return
+                return True, None
 
             # If download failed, report error
             error_message = f"Download failed. yt-dlp exited with code {returncode}."
-
+            extracted_error = extract_yt_dlp_error(full_log)
+            
             context['Terminal Log'] = f"```\n{full_log}\n```"
             report_error(error_message, context=context)
+            
+            return False, extracted_error
 
-        except Exception:
+        except Exception as e:
             report_error(f"An unexpected error occurred during download.", context={
                          "Traceback": traceback.format_exc(), **context})
+            return False, str(e)
 
 def dl_meta_from_url(url: str):
     context = {"URL": url}
@@ -348,7 +375,7 @@ def dl_meta_from_url(url: str):
         returncode, full_log = _run_subprocess(args, context)
 
         if returncode == 0:
-            return
+            return True, None
 
         # If download failed, report error
         context_with_output = {
@@ -357,6 +384,8 @@ def dl_meta_from_url(url: str):
             f"Failed to download metadata. yt-dlp exited with code {returncode}",
             context=context_with_output
         )
+        return False, extract_yt_dlp_error(full_log)
+
     except Exception as e:
         # 捕獲其他可能的錯誤，例如 FileNotFoundError
         report_error(f"An unexpected error occurred while trying to get metadata.", context={
@@ -364,6 +393,7 @@ def dl_meta_from_url(url: str):
             "Error": str(e),
             "Traceback": traceback.format_exc()
         })
+        return False, str(e)
 
 def load_videos_from_meta() -> list[Video]:
     if not os.path.isdir(META_DIR):
@@ -394,7 +424,9 @@ def parse_user_action():
             continue
         # Validate URL using regex
         if is_youtube_url(resp):
-            dl_meta_from_url(resp)
+            success, error = dl_meta_from_url(resp)
+            if not success:
+                print(f"ERROR: {error}")
             break
         else:
             logging.warning("無效的網址。請輸入有效的 YouTube 網址。 | Invalid URL. Please enter a valid YouTube URL.")
@@ -430,7 +462,12 @@ def main():
                 logging.info("No videos to download.")
                 continue
             for vid in videos:
-                vid.download()
+                success, error = vid.download()
+                if not success:
+                    logging.error(f"Download Error: {error}")
+                    # In CLI mode, we just log it to stderr (which setup_logging catches)
+                    # You might want to print forcibly if you want the user to see it immediately
+                    print(f"ERROR: {error}")
 
             cleanup_empty_meta_dir()
 
