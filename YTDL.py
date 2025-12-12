@@ -24,7 +24,7 @@ if os.path.exists('.gitignore'):
 
 # --- yt-dlp Versioning ---
 YT_DLP_VERSION_CHANNEL = "stable"
-YT_DLP_VERSION_TAG = "2025.11.12"
+YT_DLP_VERSION_TAG = "2025.12.08"
 # --- End yt-dlp Versioning ---
 
 # --- Deno Versioning ---
