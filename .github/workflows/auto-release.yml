@@ -1,10 +1,10 @@
 name: "Auto Release"
 
 on:
-  # Only trigger on push to the main branch
+  # Trigger on tag push
   push:
-    branches:
-      - "main"
+    tags:
+      - "v*"
   # Allow manual trigger
   workflow_dispatch:
 
