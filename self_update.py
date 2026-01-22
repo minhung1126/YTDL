@@ -39,8 +39,14 @@ def update_binary(YTDL_module, webhook_url: str):
     """Updates binary dependencies like yt-dlp and deno based on versions in the YTDL module."""
     # --- yt-dlp Update ---
     try:
-        yt_dlp_channel = YTDL_module.YT_DLP_VERSION_CHANNEL
-        yt_dlp_tag = YTDL_module.YT_DLP_VERSION_TAG
+        # Try getting from Config first (new structure)
+        if hasattr(YTDL_module, 'Config'):
+            yt_dlp_channel = getattr(YTDL_module.Config, 'YT_DLP_VERSION_CHANNEL', None)
+            yt_dlp_tag = getattr(YTDL_module.Config, 'YT_DLP_VERSION_TAG', None)
+        else:
+            # Fallback to old structure
+            yt_dlp_channel = getattr(YTDL_module, 'YT_DLP_VERSION_CHANNEL', None)
+            yt_dlp_tag = getattr(YTDL_module.YT_DLP_VERSION_TAG, None)
 
         if yt_dlp_channel and yt_dlp_tag:
             print(f"Updating yt-dlp to {yt_dlp_channel}@{yt_dlp_tag}...")
@@ -59,7 +65,11 @@ def update_binary(YTDL_module, webhook_url: str):
 
     # --- Deno Update ---
     try:
-        deno_version = YTDL_module.DENO_VERSION
+        if hasattr(YTDL_module, 'Config'):
+            deno_version = getattr(YTDL_module.Config, 'DENO_VERSION', None)
+        else:
+            deno_version = getattr(YTDL_module, 'DENO_VERSION', None)
+
         if deno_version:
             print(f"Attempting to update deno to version {deno_version}...")
             subprocess.run(['deno', 'upgrade', '--version', deno_version], check=True)

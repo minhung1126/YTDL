@@ -5,12 +5,12 @@
 ### 1. Versioning
 
 - **Source**: `YTDL.py` -> `__version__`
-- **Format**: `v{yyyy}.{mm}.{dd}.{index}` (e.g., `v2026.01.20`)
+- **Format**: `v{yyyy}.{mm}.{dd}.{index}` (e.g., `v2026.01.20.01`)
 - **Dev Mode**: Auto-set to `"dev"` if `.gitignore` exists.
 
 ### 2. Releases
 
-- **Trigger**: Push a tag (e.g., `git tag v2026.01.20 && git push origin v2026.01.20`).
+- **Trigger**: Push a tag (e.g., `git tag v2026.01.20.01 && git push origin v2026.01.20.01`).
 - **Automation**: GitHub Actions creates a release from the tag.
 
 ### 3. Dependencies
@@ -22,3 +22,7 @@
 
 - **OS**: Windows 11
 - **Shell**: PowerShell. Do NOT use `&&` for command chaining configuration; use `;` or run commands sequentially.
+
+### 5. Quality Assurance
+
+- **Syntax Check**: Always check for syntax errors before every commit (e.g., `python -m py_compile <file>`).
