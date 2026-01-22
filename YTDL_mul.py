@@ -5,29 +5,18 @@ import threading
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, font
 import subprocess
-
-import logging
-import YTDL  # Import the core logic
+import YTDL 
 
 sys.dont_write_bytecode = True
 
 # Initialize logging immediately
-YTDL.setup_logging()
+YTDL.Logger.setup()
 
-
-try:
-    import pyperclip
-except ImportError:
-    # YTDL.report_error("Pyperclip library is not installed. Please run 'pip install pyperclip'.")
-    # root = tk.Tk()
-    # root.withdraw()
-    # messagebox.showerror("依賴錯誤 | Dependency Error", "Pyperclip 函式庫未安裝.\n請在終端機執行 'pip install pyperclip'.")
-    # sys.exit(1)
-    subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "pyperclip"])
-    import pyperclip
-
-
+# Check and install dependencies via YTDL's manager if valid, currently we just use the try-except block here or delegate.
+# Since YTDL 2.0 has DependencyManager, we can use it to ensure pyperclip is there?
+# However, YTDL's DependencyManager isn't explicitly exposing a public 'check' for everything, but has check_and_install.
+YTDL.DependencyManager.check_and_install("pyperclip")
+import pyperclip
 
 # --- UI Text Dictionary ---
 UI_TEXT = {
@@ -82,24 +71,21 @@ class ClipboardWatcherApp:
         import os
         import shutil
         
-        if os.path.isdir(YTDL.META_DIR) and os.listdir(YTDL.META_DIR):
-            # Create custom dialog with proper button order (Cancel left, Continue right)
+        if os.path.isdir(YTDL.Config.META_DIR) and os.listdir(YTDL.Config.META_DIR):
             result = self._show_resume_dialog(
                 UI_TEXT["msg_resume_download_title"],
                 UI_TEXT["msg_resume_download_body"]
             )
             if not result:
-                # User chose not to continue, remove meta directory
                 try:
-                    shutil.rmtree(YTDL.META_DIR)
+                    shutil.rmtree(YTDL.Config.META_DIR)
                 except Exception as e:
-                    YTDL.report_error(
-                        f"Failed to delete meta directory: {YTDL.META_DIR}",
+                    YTDL.Logger.report_error(
+                        f"Failed to delete meta directory: {YTDL.Config.META_DIR}",
                         context={"Error": str(e)}
                     )
     
     def _show_resume_dialog(self, title, message):
-        """Custom dialog with Continue (default) on left, Cancel on right (Windows convention)."""
         dialog = tk.Toplevel(self.master)
         dialog.title(title)
         dialog.transient(self.master)
@@ -117,7 +103,7 @@ class ClipboardWatcherApp:
         btn_frame = ttk.Frame(dialog, padding="10")
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
         
-        result = [False]  # Use list to allow modification in nested function
+        result = [False] 
         
         def on_cancel():
             result[0] = False
@@ -127,31 +113,23 @@ class ClipboardWatcherApp:
             result[0] = True
             dialog.destroy()
         
-        # Continue button on the left (PRIMARY ACTION - Windows convention)
         continue_btn = ttk.Button(btn_frame, text="繼續 | Continue", command=on_continue)
         continue_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
         
-        # Cancel button on the right
         cancel_btn = ttk.Button(btn_frame, text="取消 | Cancel", command=on_cancel)
         cancel_btn.pack(side=tk.RIGHT, padx=5, expand=True, fill=tk.X)
         
-        # Set Continue as default (focused) button
         continue_btn.focus_set()
-        
-        # Bind Enter key to Continue
         dialog.bind('<Return>', lambda e: on_continue())
         dialog.bind('<Escape>', lambda e: on_cancel())
         
-        # Wait for dialog to close
         self.master.wait_window(dialog)
-        
         return result[0]
     
     def setup_widgets(self):
         main_frame = ttk.Frame(self.master, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Configure style for the instruction label
         style = ttk.Style(self.master)
         style.configure("Instructions.TLabel", font=("Microsoft JhengHei UI", 10))
 
@@ -189,9 +167,9 @@ class ClipboardWatcherApp:
         else:
             self.is_watching = True
             try:
-                pyperclip.copy('')  # 清空剪貼簿
+                pyperclip.copy('')  # Clear clipboard
             except Exception as e:
-                YTDL.report_error(f"無法清空剪貼簿 (Could not clear clipboard): {e}")
+                YTDL.Logger.report_error(f"無法清空剪貼簿 (Could not clear clipboard): {e}")
             self.watch_button.config(text=UI_TEXT["stop_detecting"])
             self.status_var.set(UI_TEXT["status_watching"])
             self.poll_clipboard()
@@ -202,14 +180,14 @@ class ClipboardWatcherApp:
             current_clipboard = pyperclip.paste()
             if current_clipboard:
                 import re
-                found_urls = re.findall(YTDL.YOUTUBE_REGEX, current_clipboard)
+                found_urls = re.findall(YTDL.Config.YOUTUBE_REGEX, current_clipboard)
                 for url in found_urls:
                     if url not in self.detected_urls:
                         self.detected_urls.add(url)
                         self.update_url_display(url)
         except Exception:
             self.toggle_watching()
-            YTDL.report_error(f"Failed to access clipboard.\n{traceback.format_exc()}")
+            YTDL.Logger.report_error(f"Failed to access clipboard.\n{traceback.format_exc()}")
             self.status_var.set(UI_TEXT["status_clipboard_error"])
         self.clipboard_after_id = self.master.after(1000, self.poll_clipboard)
 
@@ -251,17 +229,17 @@ class ClipboardWatcherApp:
         try:
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_processing_meta"].format(count=len(urls))))
             for url in urls:
-                success, error = YTDL.dl_meta_from_url(url)
+                success, error = YTDL.YTDLManager.dl_meta_from_url(url)
                 if not success:
                     self._schedule_error_popup(error)
 
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_meta_done"]))
-            videos_to_download = YTDL.load_videos_from_meta()
+            videos_to_download = YTDL.YTDLManager.load_videos()
             total_videos = len(videos_to_download)
             for i, video in enumerate(videos_to_download):
-                title = video.meta.get('title', 'N/A')[:25]
+                title = video.title[:25]
                 self.master.after(0, lambda i=i, t=title: self.status_var.set(UI_TEXT["status_downloading"].format(i=i+1, total=total_videos, title=t)))
-                success, error = video.download()
+                success, error = YTDL.YTDLManager.download_video(video)
                 if not success:
                     self._schedule_error_popup(error)
 
@@ -269,7 +247,7 @@ class ClipboardWatcherApp:
         except Exception:
             error_message = "A critical error occurred during the download process."
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_error"]))
-            YTDL.report_error(error_message, context={"Traceback": traceback.format_exc()})
+            YTDL.Logger.report_error(error_message, context={"Traceback": traceback.format_exc()})
 
     def _check_download_thread(self):
         if self.download_thread.is_alive():
@@ -287,16 +265,17 @@ class ClipboardWatcherApp:
 
 if __name__ == "__main__":
     try:
-        # Clear clipboard at startup to avoid processing old URLs.
+        # Clear clipboard at startup
         pyperclip.copy('')
 
-        YTDL.initialize_app(sys.argv[0])
+        # Initialize (Update Check)
+        YTDL.YTDLManager.update_self()
 
         root = tk.Tk()
         app = ClipboardWatcherApp(root)
         root.mainloop()
     except Exception:
-        YTDL.report_error("A critical error occurred on startup.", context={"Traceback": traceback.format_exc()})
+        YTDL.Logger.report_error("A critical error occurred on startup.", context={"Traceback": traceback.format_exc()})
         try:
             root = tk.Tk()
             root.withdraw()
