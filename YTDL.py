@@ -17,7 +17,7 @@ sys.dont_write_bytecode = True
 # --- App Versioning ---
 # 在開發環境中，版本號會被設為 "dev"。
 # 發布時，版本號會被更新為具體的版本字串，例如 "v2025.09.05"。
-__version__ = "v2025.12.12.01"
+__version__ = "v2026.01.22.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # --- End App Versioning ---
@@ -46,7 +46,7 @@ DISCORD_WEBHOOK = base64.b64decode(DISCORD_WEBHOOK_ENCODED).decode('utf-8') if D
 META_DIR = os.path.join(os.getcwd(), 'meta')
 # yt-dlp Environment
 EXECUTABLE = 'yt-dlp'
-CONCURRENT_FRAGMENTS = "8"
+CONCURRENT_FRAGMENTS = "2"
 PROGRESS_BAR_SECONDS = "2"
 
 # Validation Regex
