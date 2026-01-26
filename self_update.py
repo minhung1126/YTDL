@@ -39,10 +39,10 @@ def update_binary(YTDL_module, webhook_url: str):
     """Updates binary dependencies like yt-dlp and deno based on versions in the YTDL module."""
     # --- yt-dlp Update ---
     try:
-        # Try getting from Config first (new structure)
-        if hasattr(YTDL_module, 'Config'):
-            yt_dlp_channel = getattr(YTDL_module.Config, 'YT_DLP_VERSION_CHANNEL', None)
-            yt_dlp_tag = getattr(YTDL_module.Config, 'YT_DLP_VERSION_TAG', None)
+        # Try getting from _DevConfig first (new structure)
+        if hasattr(YTDL_module, '_DevConfig'):
+            yt_dlp_channel = getattr(YTDL_module._DevConfig, 'YT_DLP_VERSION_CHANNEL', None)
+            yt_dlp_tag = getattr(YTDL_module._DevConfig, 'YT_DLP_VERSION_TAG', None)
         else:
             # Fallback to old structure
             yt_dlp_channel = getattr(YTDL_module, 'YT_DLP_VERSION_CHANNEL', None)
@@ -65,8 +65,8 @@ def update_binary(YTDL_module, webhook_url: str):
 
     # --- Deno Update ---
     try:
-        if hasattr(YTDL_module, 'Config'):
-            deno_version = getattr(YTDL_module.Config, 'DENO_VERSION', None)
+        if hasattr(YTDL_module, '_DevConfig'):
+            deno_version = getattr(YTDL_module._DevConfig, 'DENO_VERSION', None)
         else:
             deno_version = getattr(YTDL_module, 'DENO_VERSION', None)
 

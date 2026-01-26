@@ -71,17 +71,17 @@ class ClipboardWatcherApp:
         import os
         import shutil
         
-        if os.path.isdir(YTDL.Config.META_DIR) and os.listdir(YTDL.Config.META_DIR):
+        if os.path.isdir(YTDL._DevConfig.META_DIR) and os.listdir(YTDL._DevConfig.META_DIR):
             result = self._show_resume_dialog(
                 UI_TEXT["msg_resume_download_title"],
                 UI_TEXT["msg_resume_download_body"]
             )
             if not result:
                 try:
-                    shutil.rmtree(YTDL.Config.META_DIR)
+                    shutil.rmtree(YTDL._DevConfig.META_DIR)
                 except Exception as e:
                     YTDL.Logger.report_error(
-                        f"Failed to delete meta directory: {YTDL.Config.META_DIR}",
+                        f"Failed to delete meta directory: {YTDL._DevConfig.META_DIR}",
                         context={"Error": str(e)}
                     )
     
@@ -180,7 +180,7 @@ class ClipboardWatcherApp:
             current_clipboard = pyperclip.paste()
             if current_clipboard:
                 import re
-                found_urls = re.findall(YTDL.Config.YOUTUBE_REGEX, current_clipboard)
+                found_urls = re.findall(YTDL._DevConfig.YOUTUBE_REGEX, current_clipboard)
                 for url in found_urls:
                     if url not in self.detected_urls:
                         self.detected_urls.add(url)
