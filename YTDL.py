@@ -17,7 +17,7 @@ from typing import Tuple, List, Optional, Dict, Any
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.01.22.03"
+__version__ = "v2026.01.26.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -68,6 +68,42 @@ class Config:
             return False
         return bool(re.search(Config.YOUTUBE_REGEX, url, re.IGNORECASE))
 
+class YTDLError(Exception):
+    """Base class for YTDL exceptions."""
+    pass
+
+class DownloadError(YTDLError):
+    """Raised when download or metadata fetching fails."""
+    pass
+
+class PrivateVideoError(DownloadError):
+    """Raised when video is private."""
+    pass
+
+class VideoUnavailableError(DownloadError):
+    """Raised when video is 404/deleted."""
+    pass
+
+class AgeRestrictedError(DownloadError):
+    """Raised when video requires age verification."""
+    pass
+
+class PremiumRequiredError(DownloadError):
+    """Raised when video requires membership."""
+    pass
+
+class MetadataError(YTDLError):
+    """Raised when metadata file operations fail."""
+    pass
+
+class UpdateError(YTDLError):
+    """Raised when self-update fails."""
+    pass
+
+class SubprocessError(YTDLError):
+    """Raised when a subprocess execution fails unexpectedly."""
+    pass
+
 class Logger:
     @staticmethod
     def setup():
@@ -100,6 +136,19 @@ class Logger:
         full_message = f"{message}"
         log_content = None
         log_key = None
+        error_type = "Generic Error"
+
+        # Check for Exception object in context to determine Error Type
+        if "Exception" in context and isinstance(context["Exception"], Exception):
+            exc = context["Exception"]
+            if isinstance(exc, YTDLError):
+                error_type = type(exc).__name__
+            else:
+                error_type = type(exc).__name__
+        elif "Error" in context and isinstance(context["Error"], str):
+             # Fallback if Error is passed as string but we can't determine type easily, 
+             # though usually it enters here as string representation.
+             pass
 
         # Extract log/traceback for attachment
         for key, value in context.items():
@@ -119,18 +168,22 @@ class Logger:
             del temp_context[log_key]
             context_message += f"**{log_key}:** See attached `{log_key.replace(' ', '_').lower()}.txt`\n"
         
+        if "Exception" in temp_context:
+             # Don't print the raw exception object in the message body if it's just repeating
+             del temp_context["Exception"]
+
         for key, value in temp_context.items():
             context_message += f"**{key}:** `{value}`\n"
 
         # Local log
-        logging.error(f"An error occurred:\n{computer_info}\n{context_message.replace('**', '').replace('`', '')}{full_message}")
+        logging.error(f"An error occurred ({error_type}):\n{computer_info}\n{context_message.replace('**', '').replace('`', '')}{full_message}")
         if log_content:
             logging.error(f"--- Full {log_key} Log ---\n{log_content}")
 
         # Discord Notification
         if Config.DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in Config.DISCORD_WEBHOOK:
             try:
-                final_report = f"🚨 **YTDL Error Report:**\n{computer_info}\n{context_message}**Error:**\n```\n{full_message}\n```"
+                final_report = f"🚨 **YTDL Error Report:**\n{computer_info}\n**Error Type:** `{error_type}`\n{context_message}**Error:**\n```\n{full_message}\n```"
                 discord_payload = {"content": final_report}
 
                 if log_content:
@@ -176,9 +229,9 @@ class SubprocessRunner:
 
             full_log = "".join(stdout_lines) + "".join(stderr_lines)
             return process.returncode, full_log
-        except Exception:
+        except Exception as e:
             Logger.report_error(f"An unexpected error occurred during subprocess execution.", context={
-                         "Traceback": traceback.format_exc(), **context})
+                         "Traceback": traceback.format_exc(), "Exception": SubprocessError(str(e)), **context})
             return -1, traceback.format_exc()
 
     @staticmethod
@@ -206,9 +259,9 @@ class Video:
         try:
             with open(self.meta_filepath, 'r', encoding='utf-8') as f:
                 return json.loads(f.read())
-        except Exception:
+        except Exception as e:
             Logger.report_error(f"Failed to read or parse meta file: {self.meta_filepath}", context={
-                         "Traceback": traceback.format_exc()})
+                         "Traceback": traceback.format_exc(), "Exception": MetadataError(str(e))})
             return {}
 
     def get_download_args(self) -> list:
@@ -239,6 +292,22 @@ class Video:
 
 class YTDLManager:
     @staticmethod
+    def _detect_specific_error(log_text: str) -> Optional[YTDLError]:
+        if not log_text:
+            return None
+        
+        if "Private video" in log_text:
+            return PrivateVideoError("Video is private.")
+        if "Video unavailable" in log_text or "404 Not Found" in log_text:
+            return VideoUnavailableError("Video is unavailable or not found.")
+        if "Sign in to confirm your age" in log_text:
+            return AgeRestrictedError("Video is age-restricted.")
+        if "members-only" in log_text or "join this channel" in log_text:
+            return PremiumRequiredError("Video requires membership.")
+        
+        return None
+
+    @staticmethod
     def dl_meta_from_url(url: str) -> Tuple[bool, Optional[str]]:
         context = {"URL": url}
         try:
@@ -268,11 +337,20 @@ class YTDLManager:
                 return True, None
 
             context["Terminal Output"] = f"```\n{full_log}\n```"
-            Logger.report_error(f"Failed to download metadata. yt-dlp exited with code {returncode}", context=context)
+            error_msg = f"Failed to download metadata. yt-dlp exited with code {returncode}"
+            
+            specific_error = YTDLManager._detect_specific_error(full_log)
+            if specific_error:
+                exception_to_report = specific_error
+                error_msg = str(specific_error)
+            else:
+                exception_to_report = DownloadError(error_msg)
+
+            Logger.report_error(error_msg, context={**context, "Exception": exception_to_report})
             return False, SubprocessRunner.extract_yt_dlp_error(full_log)
 
         except Exception as e:
-            Logger.report_error(f"Error fetching metadata.", context={"URL": url, "Error": str(e), "Traceback": traceback.format_exc()})
+            Logger.report_error(f"Error fetching metadata.", context={"URL": url, "Error": str(e), "Traceback": traceback.format_exc(), "Exception": DownloadError(str(e))})
             return False, str(e)
 
     @staticmethod
@@ -301,11 +379,19 @@ class YTDLManager:
             error_message = f"Download failed. yt-dlp exited with code {returncode}."
             extracted_error = SubprocessRunner.extract_yt_dlp_error(full_log)
             context['Terminal Log'] = f"```\n{full_log}\n```"
-            Logger.report_error(error_message, context=context)
+            
+            specific_error = YTDLManager._detect_specific_error(full_log)
+            if specific_error:
+                exception_to_report = specific_error
+                error_message = str(specific_error)
+            else:
+                exception_to_report = DownloadError(error_message)
+
+            Logger.report_error(error_message, context={**context, "Exception": exception_to_report})
             return False, extracted_error
 
         except Exception as e:
-            Logger.report_error(f"Unexpected error during download.", context={"Traceback": traceback.format_exc(), **context})
+            Logger.report_error(f"Unexpected error during download.", context={"Traceback": traceback.format_exc(), "Exception": DownloadError(str(e)), **context})
             return False, str(e)
 
     @staticmethod
@@ -315,7 +401,7 @@ class YTDLManager:
                 os.rmdir(Config.META_DIR)
                 logging.info("Empty meta directory deleted.")
             except OSError as e:
-                Logger.report_error(f"Error deleting empty meta directory.", context={"Error": str(e)})
+                Logger.report_error(f"Error deleting empty meta directory.", context={"Error": str(e), "Exception": MetadataError(str(e))})
 
     @staticmethod
     def update_self():
@@ -352,7 +438,7 @@ class YTDLManager:
                 os.remove("self_update.py")
                 
         except Exception:
-            Logger.report_error(traceback.format_exc())
+            Logger.report_error(traceback.format_exc(), context={"Exception": UpdateError("Self-update failed")})
 
 # This setup_logging is effectively an alias now for backward compatibility if needed, 
 # but preferably we use Logger.setup()
@@ -402,8 +488,8 @@ def main():
 
     except KeyboardInterrupt:
         sys.exit(0)
-    except Exception:
-        Logger.report_error("Critical error in main loop", context={"Traceback": traceback.format_exc()})
+    except Exception as e:
+        Logger.report_error("Critical error in main loop", context={"Traceback": traceback.format_exc(), "Exception": YTDLError(f"Critical: {e}")})
         input("Press ENTER to exit.")
 
 if __name__ == "__main__":
