@@ -41,7 +41,7 @@ class DependencyManager:
 DependencyManager.check_and_install("requests")
 import requests
 
-class Config:
+class _DevConfig:
     # yt-dlp Versioning
     YT_DLP_VERSION_CHANNEL = "stable"
     YT_DLP_VERSION_TAG = "2025.12.08"
@@ -66,7 +66,7 @@ class Config:
     def is_youtube_url(url: str) -> bool:
         if not url:
             return False
-        return bool(re.search(Config.YOUTUBE_REGEX, url, re.IGNORECASE))
+        return bool(re.search(_DevConfig.YOUTUBE_REGEX, url, re.IGNORECASE))
 
 class YTDLError(Exception):
     """Base class for YTDL exceptions."""
@@ -181,7 +181,7 @@ class Logger:
             logging.error(f"--- Full {log_key} Log ---\n{log_content}")
 
         # Discord Notification
-        if Config.DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in Config.DISCORD_WEBHOOK:
+        if _DevConfig.DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in _DevConfig.DISCORD_WEBHOOK:
             try:
                 final_report = f"🚨 **YTDL Error Report:**\n{computer_info}\n**Error Type:** `{error_type}`\n{context_message}**Error:**\n```\n{full_message}\n```"
                 discord_payload = {"content": final_report}
@@ -190,9 +190,9 @@ class Logger:
                     log_filename = f"{log_key.replace(' ', '_').lower()}.txt"
                     log_stream = io.BytesIO(log_content.encode('utf-8'))
                     files = {"file": (log_filename, log_stream, "text/plain")}
-                    requests.post(Config.DISCORD_WEBHOOK, data={"payload_json": json.dumps(discord_payload)}, files=files, timeout=10)
+                    requests.post(_DevConfig.DISCORD_WEBHOOK, data={"payload_json": json.dumps(discord_payload)}, files=files, timeout=10)
                 else:
-                    requests.post(Config.DISCORD_WEBHOOK, json=discord_payload, timeout=10)
+                    requests.post(_DevConfig.DISCORD_WEBHOOK, json=discord_payload, timeout=10)
             except Exception as e:
                 logging.critical(f"Failed to send error report to Discord: {e}")
 
@@ -276,15 +276,15 @@ class Video:
         template = PLAYLIST_TEMPLATE if is_playlist or is_channel else VIDEO_TEMPLATE
         
         return [
-            Config.EXECUTABLE,
+            _DevConfig.EXECUTABLE,
             '-f', 'bv+ba',
             '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr',
             '--embed-subs', '--sub-langs', 'all,-live_chat',
             '--embed-thumbnail', '--embed-metadata',
             '--merge-output-format', 'mkv', '--remux-video', 'mkv',
             '--encoding', 'utf-8',
-            '--concurrent-fragments', Config.CONCURRENT_FRAGMENTS,
-            '--progress-delta', Config.PROGRESS_BAR_SECONDS,
+            '--concurrent-fragments', _DevConfig.CONCURRENT_FRAGMENTS,
+            '--progress-delta', _DevConfig.PROGRESS_BAR_SECONDS,
             '-o', template,
             '--load-info-json', self.meta_filepath,
             '--verbose'
@@ -311,16 +311,16 @@ class YTDLManager:
     def dl_meta_from_url(url: str) -> Tuple[bool, Optional[str]]:
         context = {"URL": url}
         try:
-            if not os.path.exists(Config.META_DIR):
-                os.makedirs(Config.META_DIR)
+            if not os.path.exists(_DevConfig.META_DIR):
+                os.makedirs(_DevConfig.META_DIR)
             
             args = [
-                Config.EXECUTABLE,
+                _DevConfig.EXECUTABLE,
                 '--no-download',
                 '--no-write-playlist-metafiles', '-o',
-                os.path.join(Config.META_DIR, f"%(title)s.%(id)s"),
+                os.path.join(_DevConfig.META_DIR, f"%(title)s.%(id)s"),
                 '--write-info-json', '--encoding', 'utf-8', '--verbose',
-                '--concurrent-fragments', Config.CONCURRENT_FRAGMENTS,
+                '--concurrent-fragments', _DevConfig.CONCURRENT_FRAGMENTS,
                 url
             ]
             
@@ -355,11 +355,11 @@ class YTDLManager:
 
     @staticmethod
     def load_videos() -> List[Video]:
-        if not os.path.isdir(Config.META_DIR):
+        if not os.path.isdir(_DevConfig.META_DIR):
             return []
         videos = []
-        for f in os.listdir(Config.META_DIR):
-            v = Video(os.path.join(Config.META_DIR, f))
+        for f in os.listdir(_DevConfig.META_DIR):
+            v = Video(os.path.join(_DevConfig.META_DIR, f))
             if v.is_valid:
                 videos.append(v)
         return videos
@@ -396,9 +396,9 @@ class YTDLManager:
 
     @staticmethod
     def cleanup_meta():
-        if os.path.isdir(Config.META_DIR) and not os.listdir(Config.META_DIR):
+        if os.path.isdir(_DevConfig.META_DIR) and not os.listdir(_DevConfig.META_DIR):
             try:
-                os.rmdir(Config.META_DIR)
+                os.rmdir(_DevConfig.META_DIR)
                 logging.info("Empty meta directory deleted.")
             except OSError as e:
                 Logger.report_error(f"Error deleting empty meta directory.", context={"Error": str(e), "Exception": MetadataError(str(e))})
@@ -426,7 +426,7 @@ class YTDLManager:
                 if resp.ok:
                     with open(updater_script_name, 'wb') as f:
                         f.write(resp.content)
-                    subprocess.Popen([sys.executable, updater_script_name, sys.argv[0], Config.DISCORD_WEBHOOK])
+                    subprocess.Popen([sys.executable, updater_script_name, sys.argv[0], _DevConfig.DISCORD_WEBHOOK])
                     sys.exit(0)
                 else:
                     Logger.report_error(f"Failed to download updater: {resp.status_code}")
@@ -448,8 +448,8 @@ dl_meta_from_url = YTDLManager.dl_meta_from_url
 load_videos_from_meta = YTDLManager.load_videos
 clean_empty_meta_dir = YTDLManager.cleanup_meta # Alias if needed
 # Aliases for compatibility with YTDL_mul.py until it is refactored
-YOUTUBE_REGEX = Config.YOUTUBE_REGEX
-META_DIR = Config.META_DIR
+YOUTUBE_REGEX = _DevConfig.YOUTUBE_REGEX
+META_DIR = _DevConfig.META_DIR
 initialize_app = lambda x: YTDLManager.update_self()
 
 def main():
@@ -458,10 +458,10 @@ def main():
         YTDLManager.update_self()
         while True:
             # Simple CLI Interaction
-            if os.path.isdir(Config.META_DIR) and os.listdir(Config.META_DIR):
+            if os.path.isdir(_DevConfig.META_DIR) and os.listdir(_DevConfig.META_DIR):
                 resp = input("Found temp files. Continue downloading? (Y/N) ").lower()
                 if resp == 'n':
-                    shutil.rmtree(Config.META_DIR)
+                    shutil.rmtree(_DevConfig.META_DIR)
                 elif resp != 'y':
                     sys.exit(1)
 
@@ -469,7 +469,7 @@ def main():
             if resp.lower() == 'exit':
                 sys.exit(0)
             
-            if Config.is_youtube_url(resp):
+            if _DevConfig.is_youtube_url(resp):
                 success, error = YTDLManager.dl_meta_from_url(resp)
                 if not success:
                     print(f"ERROR: {error}")
