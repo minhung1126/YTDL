@@ -21,7 +21,7 @@
 ### 4. Environment
 
 - **OS**: Windows 11
-- **Shell**: PowerShell. Run commands sequentially. Do NOT chain commands (e.g. with `;` or `&&`) as this prevents auto-continue from triggering.
+- **Shell**: PowerShell. Command chaining (e.g. with `;` or `&&`) is preferred.
 
 ### 5. Quality Assurance
 
