@@ -21,7 +21,7 @@
 ### 4. Environment
 
 - **OS**: Windows 11
-- **Shell**: PowerShell. Command chaining (e.g. with `;` or `&&`) is preferred.
+- **Shell**: PowerShell. Command chaining (e.g. with `;`) is preferred.
 
 ### 5. Quality Assurance
 
