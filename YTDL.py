@@ -44,7 +44,7 @@ import requests
 class _DevConfig:
     # yt-dlp Versioning
     YT_DLP_VERSION_CHANNEL = "stable"
-    YT_DLP_VERSION_TAG = "2025.12.08"
+    YT_DLP_VERSION_TAG = "2026.01.29"
     
     # Deno Versioning
     DENO_VERSION = "2.5.4"
