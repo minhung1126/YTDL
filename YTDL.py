@@ -17,7 +17,7 @@ from typing import Tuple, List, Optional, Dict, Any
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.02.01.01"
+__version__ = "v2026.02.04.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -44,7 +44,7 @@ import requests
 class _DevConfig:
     # yt-dlp Versioning
     YT_DLP_VERSION_CHANNEL = "stable"
-    YT_DLP_VERSION_TAG = "2026.01.31"
+    YT_DLP_VERSION_TAG = "2026.02.04"
     
     # Deno Versioning
     DENO_VERSION = "2.5.4"
