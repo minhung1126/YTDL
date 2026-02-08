@@ -11,43 +11,91 @@ on:
 jobs:
   auto-release:
     name: "Auto Release"
-    runs-on: "ubuntu-latest"
+    runs-on: "windows-latest"
 
-    # Grant the GITHUB_TOKEN write permission to create a release
     permissions:
       contents: write
 
     steps:
-      # Step 1: Checkout the repository code
       - name: "Checkout code"
         uses: actions/checkout@v4
 
-      # Step 2: Extract the __version__ from YTDL.py
-      - name: "Extract version from YTDL.py"
-        id: version_extractor
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: "Install dependencies"
         run: |
-          # Find the line starting with __version__ to ignore commented lines
+          python -m pip install --upgrade pip
+          pip install requests pyinstaller
+
+      - name: "Extract version info"
+        id: version_extractor
+        shell: bash
+        run: |
           VERSION=$(grep '^__version__' YTDL.py | cut -d '"' -f 2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-        
-      # Step 3: Package YTDL.py, YTDL_mul.py, and self_update.py into a zip file
-      - name: "Package files into a zip"
-        if: steps.version_extractor.outputs.version != 'dev'
-        run: zip "YTDL.${{ steps.version_extractor.outputs.version }}.zip" YTDL.py YTDL_mul.py self_update.py
+          
+          # Extract DENO_VERSION
+          DENO_VERSION=$(grep 'DENO_VERSION =' YTDL.py | cut -d '"' -f 2)
+          echo "deno_version=$DENO_VERSION" >> $GITHUB_OUTPUT
 
-      # Step 4: Prepare release notes
+      - name: "Build EXE"
+        if: steps.version_extractor.outputs.version != 'dev'
+        run: pyinstaller --onefile --clean --name YTDL YTDL.py
+
+      - name: "Download Runtime Dependencies"
+        if: steps.version_extractor.outputs.version != 'dev'
+        shell: pwsh
+        run: |
+          # yt-dlp
+          Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "yt-dlp.exe"
+          
+          # ffmpeg
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip"
+          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp"
+          Get-ChildItem -Path "ffmpeg_temp\*\bin\*.exe" | Move-Item -Destination .
+          
+          # Deno
+          $denoVer = "${{ steps.version_extractor.outputs.deno_version }}"
+          $denoUrl = "https://github.com/denoland/deno/releases/download/v$denoVer/deno-x86_64-pc-windows-msvc.zip"
+          Invoke-WebRequest -Uri $denoUrl -OutFile "deno.zip"
+          Expand-Archive -Path "deno.zip" -DestinationPath "deno_temp"
+          Get-ChildItem -Path "deno_temp" -Filter "deno.exe" -Recurse | Move-Item -Destination .
+
+      - name: "Package Windows Bundle"
+        if: steps.version_extractor.outputs.version != 'dev'
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version_extractor.outputs.version }}"
+          $zipName = "YTDL.${ver}.Windows.zip"
+          Compress-Archive -Path "dist\YTDL.exe", "yt-dlp.exe", "ffmpeg.exe", "ffprobe.exe", "deno.exe" -DestinationPath $zipName
+
+      - name: "Package Source Code"
+        if: steps.version_extractor.outputs.version != 'dev'
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version_extractor.outputs.version }}"
+          Compress-Archive -Path "YTDL.py", "YTDL_mul.py" -DestinationPath "YTDL.${ver}.zip"
+
       - name: "Prepare release notes"
         if: steps.version_extractor.outputs.version != 'dev'
-        run: echo '點開`Assets`並下載`YTDL.${{ steps.version_extractor.outputs.version }}.zip`，之後解壓縮即可使用。' > release_notes.md
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version_extractor.outputs.version }}"
+          $msg = "點開``Assets``並下載``YTDL.$ver.Windows.zip`` (含執行檔與環境) 或 ``YTDL.$ver.zip`` (原始碼)。"
+          $msg | Out-File -FilePath release_notes.md -Encoding utf8
 
-      # Step 5: Create the new release using the extracted version
       - name: "Create Release"
         if: steps.version_extractor.outputs.version != 'dev'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           gh release create ${{ steps.version_extractor.outputs.version }} \
             "YTDL.${{ steps.version_extractor.outputs.version }}.zip" \
+            "YTDL.${{ steps.version_extractor.outputs.version }}.Windows.zip" \
             --title "Release ${{ steps.version_extractor.outputs.version }}" \
             --notes-file "release_notes.md" \
             --generate-notes
