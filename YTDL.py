@@ -17,7 +17,7 @@ from typing import Tuple, List, Optional, Dict, Any
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.02.18.01"
+__version__ = "v2026.02.18.02"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -458,7 +458,7 @@ class YTDLManager:
                 if resp.ok:
                     with open(updater_script_name, 'wb') as f:
                         f.write(resp.content)
-                    subprocess.Popen([sys.executable, updater_script_name, sys.argv[0], _DevConfig.DISCORD_WEBHOOK])
+                    subprocess.Popen([sys.executable, updater_script_name, os.path.abspath(sys.argv[0]), _DevConfig.DISCORD_WEBHOOK])
                     sys.exit(0)
                 else:
                     Logger.report_error(f"Failed to download updater: {resp.status_code}")

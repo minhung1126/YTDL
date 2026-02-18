@@ -81,8 +81,8 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
         # 4. Download and Extract
         print(f"Downloading FFmpeg {ffmpeg_tag}...")
         
-        # Always download latest as per user request
-        zip_url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+        # Dynamically construct URL based on version tag
+        zip_url = f"https://github.com/yt-dlp/FFmpeg-Builds/releases/download/{ffmpeg_tag}/ffmpeg-master-{ffmpeg_tag}-win64-gpl.zip"
         
         print(f"Download URL: {zip_url}")
         resp = requests.get(zip_url, timeout=300)
