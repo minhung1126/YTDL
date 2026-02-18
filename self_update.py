@@ -54,7 +54,7 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
         if yt_dlp_path:
             target_dir = os.path.dirname(yt_dlp_path)
             
-        ffmpeg_exe = os.path.join(target_dir, 'ffmpeg.exe')
+        ffmpeg_exe = os.path.join(target_dir, 'yt-dlp-ffmpeg.exe')
         
         # 3. Version Check
         should_update = False
@@ -64,13 +64,30 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
         else:
             try:
                 # Run ffmpeg -version
-                # We expect the output to contain the tag (e.g. date)
-                res = subprocess.run([ffmpeg_exe, '-version'], capture_output=True, text=True)
-                if ffmpeg_tag.lower() not in res.stdout.lower():
-                    print(f"FFmpeg version match failed (Expected: {ffmpeg_tag}). Updating...")
-                    should_update = True
+                res = subprocess.run([ffmpeg_exe, '-version'], capture_output=True, text=True, encoding='utf-8', errors='ignore')
+                
+                # Extract --extra-version=YYYYMMDD
+                import re
+                match = re.search(r'--extra-version=(\d+)', res.stdout)
+                
+                if match:
+                    installed_ver = int(match.group(1))
+                    if ffmpeg_tag and ffmpeg_tag.isdigit():
+                         target_ver = int(ffmpeg_tag)
+                         if target_ver > installed_ver:
+                             print(f"FFmpeg version outdated ({installed_ver} < {target_ver}). Updating...")
+                             should_update = True
+                         else:
+                             print(f"FFmpeg is up to date ({installed_ver} >= {target_ver}).")
+                    else:
+                        # Fallback for non-numeric tags
+                         if ffmpeg_tag.lower() not in res.stdout.lower():
+                            print(f"FFmpeg version match failed (Expected: {ffmpeg_tag}). Updating...")
+                            should_update = True
                 else:
-                    print(f"FFmpeg is up to date ({ffmpeg_tag}).")
+                    print("Could not determine FFmpeg version (no --extra-version). Updating...")
+                    should_update = True
+                    
             except Exception:
                 print("Error checking FFmpeg version. Force updating...")
                 should_update = True
@@ -82,7 +99,9 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
         print(f"Downloading FFmpeg {ffmpeg_tag}...")
         
         # Dynamically construct URL based on version tag
-        zip_url = f"https://github.com/yt-dlp/FFmpeg-Builds/releases/download/{ffmpeg_tag}/ffmpeg-master-{ffmpeg_tag}-win64-gpl.zip"
+        # Use 'latest' for the download if we determined we need an update, ensuring we get the newest
+        download_tag = "latest"
+        zip_url = f"https://github.com/yt-dlp/FFmpeg-Builds/releases/download/{download_tag}/ffmpeg-master-{download_tag}-win64-gpl.zip"
         
         print(f"Download URL: {zip_url}")
         resp = requests.get(zip_url, timeout=300)
@@ -96,13 +115,32 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
                     filename = os.path.basename(member)
                     if not filename: continue
                     
-                    target_path = os.path.join(target_dir, filename)
-                    # print(f"Extracting {filename} to {target_dir}...")
+                    # Rename to yt-dlp- prefix
+                    if filename.lower() == 'ffmpeg.exe':
+                        new_filename = 'yt-dlp-ffmpeg.exe'
+                    elif filename.lower() == 'ffprobe.exe':
+                        new_filename = 'yt-dlp-ffprobe.exe'
+                    else:
+                        continue # Skip other files if any
+                    
+                    target_path = os.path.join(target_dir, new_filename)
+                    # print(f"Extracting {filename} as {new_filename} to {target_dir}...")
                     
                     with z.open(member) as source, open(target_path, 'wb') as target:
                         shutil.copyfileobj(source, target)
                         
         print(f"FFmpeg update completed. Binaries placed in {target_dir}")
+
+        # TODO: Remove this legacy cleanup in future versions (e.g. after 2026.06)
+        # Cleanup legacy non-prefixed binaries
+        for legacy_bin in ['ffmpeg.exe', 'ffprobe.exe', 'ffplay.exe']:
+            legacy_path = os.path.join(target_dir, legacy_bin)
+            if os.path.exists(legacy_path):
+                try:
+                    os.remove(legacy_path)
+                    print(f"Removed legacy binary: {legacy_bin}")
+                except OSError as e:
+                    print(f"Failed to remove legacy binary {legacy_bin}: {e}")
 
     except Exception as e:
         report_error_updater(f"FFmpeg update failed: {e}\n{traceback.format_exc()}", webhook_url)

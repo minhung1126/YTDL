@@ -17,7 +17,7 @@ from typing import Tuple, List, Optional, Dict, Any
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.02.18.05"
+__version__ = "v2026.02.18.06"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -50,7 +50,7 @@ class _DevConfig:
     DENO_VERSION = "2.5.4"
 
     # FFmpeg Configuration
-    FFMPEG_VERSION_TAG = "latest"
+    FFMPEG_VERSION_TAG = "20260218"
     
     _yt_dlp_path = shutil.which('yt-dlp')
     _yt_dlp_dir = os.path.dirname(_yt_dlp_path) if _yt_dlp_path else None
@@ -58,7 +58,7 @@ class _DevConfig:
     # Try to find ffmpeg/ffprobe next to yt-dlp first
     FFMPEG_BINARY = None
     if _yt_dlp_dir:
-        _local_ffmpeg = os.path.join(_yt_dlp_dir, 'ffmpeg.exe')
+        _local_ffmpeg = os.path.join(_yt_dlp_dir, 'yt-dlp-ffmpeg.exe')
         if os.path.exists(_local_ffmpeg):
             FFMPEG_BINARY = _local_ffmpeg
         else:
@@ -69,7 +69,7 @@ class _DevConfig:
     
     FFPROBE_BINARY = None
     if _yt_dlp_dir:
-        _local_ffprobe = os.path.join(_yt_dlp_dir, 'ffprobe.exe')
+        _local_ffprobe = os.path.join(_yt_dlp_dir, 'yt-dlp-ffprobe.exe')
         if os.path.exists(_local_ffprobe):
             FFPROBE_BINARY = _local_ffprobe
     
