@@ -17,7 +17,7 @@ from typing import Tuple, List, Optional, Dict, Any
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.02.18.03"
+__version__ = "v2026.02.18.05"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -43,8 +43,8 @@ import requests
 
 class _DevConfig:
     # yt-dlp Versioning
-    YT_DLP_VERSION_CHANNEL = "stable"
-    YT_DLP_VERSION_TAG = "2026.02.04"
+    YT_DLP_VERSION_CHANNEL = "nightly"
+    # YT_DLP_VERSION_TAG is no longer used; always checks latest nightly
     
     # Deno Versioning
     DENO_VERSION = "2.5.4"
@@ -471,6 +471,17 @@ class YTDLManager:
         except Exception:
             Logger.report_error(traceback.format_exc(), context={"Exception": UpdateError("Self-update failed")})
 
+    @staticmethod
+    def update_yt_dlp():
+        """Checks for yt-dlp updates (dynamic nightly check)."""
+        try:
+            channel = _DevConfig.YT_DLP_VERSION_CHANNEL
+            logging.info(f"Checking for yt-dlp updates ({channel})...")
+            # We use --update-to [channel] which automatically checks if a newer version is available
+            subprocess.run([_DevConfig.EXECUTABLE, '--update-to', channel], check=True)
+        except Exception as e:
+             logging.error(f"Failed to check/update yt-dlp: {e}")
+
 # This setup_logging is effectively an alias now for backward compatibility if needed, 
 # but preferably we use Logger.setup()
 setup_logging = Logger.setup
@@ -487,6 +498,7 @@ def main():
     Logger.setup()
     try:
         YTDLManager.update_self()
+        YTDLManager.update_yt_dlp() # Ensure yt-dlp is always latest nightly
         while True:
             # Simple CLI Interaction
             if os.path.isdir(_DevConfig.META_DIR) and os.listdir(_DevConfig.META_DIR):

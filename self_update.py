@@ -110,30 +110,9 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
 def update_binary(YTDL_module, webhook_url: str):
     """Updates binary dependencies like yt-dlp and deno based on versions in the YTDL module."""
     # --- yt-dlp Update ---
-    try:
-        # Try getting from _DevConfig first (new structure)
-        if hasattr(YTDL_module, '_DevConfig'):
-            yt_dlp_channel = getattr(YTDL_module._DevConfig, 'YT_DLP_VERSION_CHANNEL', None)
-            yt_dlp_tag = getattr(YTDL_module._DevConfig, 'YT_DLP_VERSION_TAG', None)
-        else:
-            # Fallback to old structure
-            yt_dlp_channel = getattr(YTDL_module, 'YT_DLP_VERSION_CHANNEL', None)
-            yt_dlp_tag = getattr(YTDL_module.YT_DLP_VERSION_TAG, None)
-
-        if yt_dlp_channel and yt_dlp_tag:
-            print(f"Updating yt-dlp to {yt_dlp_channel}@{yt_dlp_tag}...")
-            subprocess.run(['yt-dlp', '--update-to', f'{yt_dlp_channel}@{yt_dlp_tag}'], check=True)
-        else:
-            report_error_updater("yt-dlp version info is empty in YTDL.py. Skipping update.", webhook_url)
-
-    except AttributeError:
-         report_error_updater("Version variables for yt-dlp not found in YTDL.py. Skipping update.", webhook_url)
-    except subprocess.CalledProcessError as e:
-        report_error_updater(f"yt-dlp update failed: {e}", webhook_url)
-    except FileNotFoundError:
-        report_error_updater("`yt-dlp` command not found. Skipping yt-dlp update.", webhook_url)
-    except Exception:
-        report_error_updater(f"An unexpected error occurred during yt-dlp update.\n{traceback.format_exc()}", webhook_url)
+    # yt-dlp update is now handled by YTDL.py on startup.
+    # We no longer update it here to avoid double-checking or conflicts.
+    pass
 
     # --- Deno Update ---
     try:
