@@ -7,6 +7,7 @@
 - **Source**: `YTDL.py` -> `__version__`
 - **Format**: `v{yyyy}.{mm}.{dd}.{index}` (e.g., `v2026.01.20.01`)
 - **Dev Mode**: Auto-set to `"dev"` if `.gitignore` exists.
+- **Note**: A new version number is only needed when creating a release.
 
 ### 2. Releases
 
