@@ -35,6 +35,78 @@ def report_error_updater(message: str, webhook_url: str):
         except Exception as e:
             print(f"[CRITICAL] Failed to send updater error report to Discord: {e}", file=sys.stderr)
 
+def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
+    """Updates FFmpeg/FFprobe binaries if needed."""
+    try:
+        # 1. Configuration
+        ffmpeg_tag = version_tag
+        if not ffmpeg_tag:
+            if hasattr(YTDL_module, '_DevConfig'):
+                ffmpeg_tag = getattr(YTDL_module._DevConfig, 'FFMPEG_VERSION_TAG', None)
+
+        if not ffmpeg_tag:
+            return
+
+        # 2. Target Directory
+        # Resolve yt-dlp location to find where to put ffmpeg
+        yt_dlp_path = shutil.which('yt-dlp')
+        target_dir = os.getcwd() 
+        if yt_dlp_path:
+            target_dir = os.path.dirname(yt_dlp_path)
+            
+        ffmpeg_exe = os.path.join(target_dir, 'ffmpeg.exe')
+        
+        # 3. Version Check
+        should_update = False
+        if not os.path.exists(ffmpeg_exe):
+            print(f"FFmpeg not found at {ffmpeg_exe}. Downloading...")
+            should_update = True
+        else:
+            try:
+                # Run ffmpeg -version
+                # We expect the output to contain the tag (e.g. date)
+                res = subprocess.run([ffmpeg_exe, '-version'], capture_output=True, text=True)
+                if ffmpeg_tag.lower() not in res.stdout.lower():
+                    print(f"FFmpeg version match failed (Expected: {ffmpeg_tag}). Updating...")
+                    should_update = True
+                else:
+                    print(f"FFmpeg is up to date ({ffmpeg_tag}).")
+            except Exception:
+                print("Error checking FFmpeg version. Force updating...")
+                should_update = True
+        
+        if not should_update:
+            return
+
+        # 4. Download and Extract
+        print(f"Downloading FFmpeg {ffmpeg_tag}...")
+        
+        # Always download latest as per user request
+        zip_url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+        
+        print(f"Download URL: {zip_url}")
+        resp = requests.get(zip_url, timeout=300)
+        resp.raise_for_status()
+        
+        print("Extracting FFmpeg binaries...")
+        with ZipFile(io.BytesIO(resp.content)) as z:
+            for member in z.namelist():
+                # Extract all .exe files in 'bin/'
+                if '/bin/' in member and member.endswith('.exe'):
+                    filename = os.path.basename(member)
+                    if not filename: continue
+                    
+                    target_path = os.path.join(target_dir, filename)
+                    # print(f"Extracting {filename} to {target_dir}...")
+                    
+                    with z.open(member) as source, open(target_path, 'wb') as target:
+                        shutil.copyfileobj(source, target)
+                        
+        print(f"FFmpeg update completed. Binaries placed in {target_dir}")
+
+    except Exception as e:
+        report_error_updater(f"FFmpeg update failed: {e}\n{traceback.format_exc()}", webhook_url)
+
 def update_binary(YTDL_module, webhook_url: str):
     """Updates binary dependencies like yt-dlp and deno based on versions in the YTDL module."""
     # --- yt-dlp Update ---
@@ -118,6 +190,9 @@ def update_binary(YTDL_module, webhook_url: str):
             report_error_updater(f"Failed to download and install Deno.\n{install_e}\n{traceback.format_exc()}", webhook_url)
     except Exception:
         report_error_updater(f"An unexpected error occurred during Deno update.\n{traceback.format_exc()}", webhook_url)
+
+    # --- FFmpeg Update ---
+    update_ffmpeg(YTDL_module, webhook_url)
 
 def program_files_update(webhook_url: str):
     cwd = os.getcwd()

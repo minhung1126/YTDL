@@ -17,7 +17,7 @@ from typing import Tuple, List, Optional, Dict, Any
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.02.08.01"
+__version__ = "v2026.02.18.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -48,6 +48,33 @@ class _DevConfig:
     
     # Deno Versioning
     DENO_VERSION = "2.5.4"
+
+    # FFmpeg Configuration
+    FFMPEG_VERSION_TAG = "latest"
+    
+    _yt_dlp_path = shutil.which('yt-dlp')
+    _yt_dlp_dir = os.path.dirname(_yt_dlp_path) if _yt_dlp_path else None
+    
+    # Try to find ffmpeg/ffprobe next to yt-dlp first
+    FFMPEG_BINARY = None
+    if _yt_dlp_dir:
+        _local_ffmpeg = os.path.join(_yt_dlp_dir, 'ffmpeg.exe')
+        if not os.path.exists(_local_ffmpeg):
+            print("CRITICAL: FFmpeg binary not found in yt-dlp directory.")
+            print("Please perform a manual update or reinstall to fetch missing dependencies.")
+
+        if os.path.exists(_local_ffmpeg):
+            FFMPEG_BINARY = _local_ffmpeg
+    
+    # We do NOT fallback to PATH as per user request
+    
+    FFPROBE_BINARY = None
+    if _yt_dlp_dir:
+        _local_ffprobe = os.path.join(_yt_dlp_dir, 'ffprobe.exe')
+        if os.path.exists(_local_ffprobe):
+            FFPROBE_BINARY = _local_ffprobe
+    
+    # We do NOT fallback to PATH as per user request
 
     # Discord Webhook
     _DISCORD_WEBHOOK_ENCODED = "aHR0cHM6Ly9kaXNjb3JkLmNvbS9hcGkvd2ViaG9va3MvMTQxMzc0NjU0MTY4MzkzNzM5MC9tWm9ZRy1mS211cnhFMFhPNWhjUmhITzBJWEREaWgyeDF2QnJ4dEFzQ0VTdEZ3M0FFTnNYamt3djQzbWFoaHhOQzFybw=="
@@ -275,7 +302,7 @@ class Video:
         
         template = PLAYLIST_TEMPLATE if is_playlist or is_channel else VIDEO_TEMPLATE
         
-        return [
+        args = [
             _DevConfig.EXECUTABLE,
             '-f', 'bv+ba',
             '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr',
@@ -289,6 +316,11 @@ class Video:
             '--load-info-json', self.meta_filepath,
             '--verbose'
         ]
+
+        if _DevConfig.FFMPEG_BINARY:
+            args.extend(['--ffmpeg-location', _DevConfig.FFMPEG_BINARY])
+        
+        return args
 
 class YTDLManager:
     @staticmethod
