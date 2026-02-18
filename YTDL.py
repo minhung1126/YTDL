@@ -17,7 +17,7 @@ from typing import Tuple, List, Optional, Dict, Any
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.02.18.02"
+__version__ = "v2026.02.18.03"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -59,12 +59,11 @@ class _DevConfig:
     FFMPEG_BINARY = None
     if _yt_dlp_dir:
         _local_ffmpeg = os.path.join(_yt_dlp_dir, 'ffmpeg.exe')
-        if not os.path.exists(_local_ffmpeg):
-            print("CRITICAL: FFmpeg binary not found in yt-dlp directory.")
-            print("Please perform a manual update or reinstall to fetch missing dependencies.")
-
         if os.path.exists(_local_ffmpeg):
             FFMPEG_BINARY = _local_ffmpeg
+        else:
+            print("CRITICAL: FFmpeg binary not found in yt-dlp directory.")
+            print("Please perform a manual update or reinstall to fetch missing dependencies.")
     
     # We do NOT fallback to PATH as per user request
     
