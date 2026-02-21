@@ -27,3 +27,8 @@
 ### 5. Quality Assurance
 
 - **Syntax Check**: Always check for syntax errors before every commit (e.g., `python -m py_compile <file>`).
+
+### 6. Notes
+
+- **Discord Webhook**: Intentionally base64-encoded in `YTDL.py` source. Do not move to env var.
+- **`ytdl/` Directory**: Intentionally kept empty. Do not remove or add `__init__.py`.

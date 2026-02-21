@@ -14,6 +14,7 @@ import logging
 import io
 import time
 from typing import Tuple, List, Optional, Dict, Any
+from dataclasses import dataclass, field
 
 sys.dont_write_bytecode = True
 
@@ -98,8 +99,8 @@ class Config:
     _APP_DIR = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
     META_DIR = os.path.join(_APP_DIR, 'meta')
     EXECUTABLE = 'yt-dlp'
-    CONCURRENT_FRAGMENTS = "2"
-    PROGRESS_BAR_SECONDS = "2"
+    CONCURRENT_FRAGMENTS = "2"  # String: passed directly as CLI args to yt-dlp
+    PROGRESS_BAR_SECONDS = "2"  # String: passed directly as CLI args to yt-dlp
 
     # Regex
     YOUTUBE_REGEX = r'(?:https?://)?(?:www\.)?(?:m\.)?(?:youtube\.com|youtu\.be)/(?:watch\?v=|embed/|v/|shorts/|playlist\?|channel/|c/|user/|@)?[\w\-?=&%]+'
@@ -152,6 +153,16 @@ class SubprocessError(YTDLError):
     """Raised when a subprocess execution fails unexpectedly."""
     pass
 
+@dataclass
+class ErrorContext:
+    """Standardized error context for Logger.report_error."""
+    url: str = ""
+    title: str = ""
+    traceback_str: str = ""
+    log_output: str = ""
+    exception: Optional[Exception] = None
+    extra: Dict[str, str] = field(default_factory=dict)
+
 class Logger:
     @staticmethod
     def setup():
@@ -176,58 +187,47 @@ class Logger:
         return f"**Computer:** `{socket.gethostname()}` (`{user}`) | **OS:** `{platform.system()} {platform.release()}` | **Ver:** `{__version__}`"
 
     @staticmethod
-    def report_error(message: str, context: dict = None):
-        if context is None:
-            context = {}
+    def report_error(message: str, ctx: Optional[ErrorContext] = None):
+        if ctx is None:
+            ctx = ErrorContext()
         
         computer_info = Logger._get_system_info()
-        full_message = f"{message}"
+        error_type = type(ctx.exception).__name__ if ctx.exception else "Generic Error"
+
+        # Determine log content for attachment
         log_content = None
-        log_key = None
-        error_type = "Generic Error"
+        log_label = None
+        if ctx.log_output:
+            log_content = re.sub(r'```(.*?)\n|```', '', ctx.log_output, flags=re.DOTALL)
+            log_label = "Terminal Log"
+        elif ctx.traceback_str:
+            log_content = ctx.traceback_str
+            log_label = "Traceback"
 
-        # Check for Exception object in context to determine Error Type
-        if "Exception" in context and isinstance(context["Exception"], Exception):
-            error_type = type(context["Exception"]).__name__
-
-        # Extract log/traceback for attachment
-        for key, value in context.items():
-            is_log = str(value).startswith("```")
-            is_traceback = key == "Traceback"
-            if is_log or is_traceback:
-                log_key = key
-                if is_log:
-                    log_content = re.sub(r'```(.*?)\n|```', '', str(value), flags=re.DOTALL)
-                else: 
-                    log_content = str(value)
-                break
-
+        # Build context message for Discord
         context_message = ""
-        temp_context = context.copy()
-        if log_key:
-            del temp_context[log_key]
-            context_message += f"**{log_key}:** See attached `{log_key.replace(' ', '_').lower()}.txt`\n"
-        
-        if "Exception" in temp_context:
-             # Don't print the raw exception object in the message body if it's just repeating
-             del temp_context["Exception"]
-
-        for key, value in temp_context.items():
+        if log_label and log_content:
+            context_message += f"**{log_label}:** See attached `{log_label.replace(' ', '_').lower()}.txt`\n"
+        if ctx.url:
+            context_message += f"**URL:** `{ctx.url}`\n"
+        if ctx.title:
+            context_message += f"**Title:** `{ctx.title}`\n"
+        for key, value in ctx.extra.items():
             context_message += f"**{key}:** `{value}`\n"
 
         # Local log
-        logging.error(f"An error occurred ({error_type}):\n{computer_info}\n{context_message.replace('**', '').replace('`', '')}{full_message}")
+        logging.error(f"An error occurred ({error_type}):\n{computer_info}\n{context_message.replace('**', '').replace('`', '')}{message}")
         if log_content:
-            logging.error(f"--- Full {log_key} Log ---\n{log_content}")
+            logging.error(f"--- Full {log_label} Log ---\n{log_content}")
 
         # Discord Notification
         if Config.DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in Config.DISCORD_WEBHOOK:
             try:
-                final_report = f"🚨 **YTDL Error Report:**\n{computer_info}\n**Error Type:** `{error_type}`\n{context_message}**Error:**\n```\n{full_message}\n```"
+                final_report = f"🚨 **YTDL Error Report:**\n{computer_info}\n**Error Type:** `{error_type}`\n{context_message}**Error:**\n```\n{message}\n```"
                 discord_payload = {"content": final_report}
 
                 if log_content:
-                    log_filename = f"{log_key.replace(' ', '_').lower()}.txt"
+                    log_filename = f"{log_label.replace(' ', '_').lower()}.txt"
                     log_stream = io.BytesIO(log_content.encode('utf-8'))
                     files = {"file": (log_filename, log_stream, "text/plain")}
                     requests.post(Config.DISCORD_WEBHOOK, data={"payload_json": json.dumps(discord_payload)}, files=files, timeout=10)
@@ -268,14 +268,21 @@ class SubprocessRunner:
 
             full_log = "".join(stdout_lines) + "".join(stderr_lines)
             return process.returncode, full_log
+        except KeyboardInterrupt:
+            logging.warning("Process interrupted by user.")
+            try:
+                process.terminate()
+            except Exception:
+                pass
+            return -1, "Interrupted by user"
         except FileNotFoundError:
             error_msg = f"Executable not found: {args[0] if args else 'N/A'}. Ensure it is installed and in PATH."
-            Logger.report_error(error_msg, context={
-                         "Exception": SubprocessError(error_msg), **context})
+            Logger.report_error(error_msg, ctx=ErrorContext(
+                exception=SubprocessError(error_msg), extra=context))
             return -1, error_msg
         except Exception as e:
-            Logger.report_error(f"An unexpected error occurred during subprocess execution.", context={
-                         "Traceback": traceback.format_exc(), "Exception": SubprocessError(str(e)), **context})
+            Logger.report_error(f"An unexpected error occurred during subprocess execution.", ctx=ErrorContext(
+                traceback_str=traceback.format_exc(), exception=SubprocessError(str(e)), extra=context))
             return -1, traceback.format_exc()
 
     @staticmethod
@@ -304,8 +311,8 @@ class Video:
             with open(self.meta_filepath, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            Logger.report_error(f"Failed to read or parse meta file: {self.meta_filepath}", context={
-                         "Traceback": traceback.format_exc(), "Exception": MetadataError(str(e))})
+            Logger.report_error(f"Failed to read or parse meta file: {self.meta_filepath}", ctx=ErrorContext(
+                traceback_str=traceback.format_exc(), exception=MetadataError(str(e))))
             return {}
 
     def get_download_args(self) -> list:
@@ -313,7 +320,8 @@ class Video:
         VIDEO_TEMPLATE = r"%(title)s.%(id)s.%(ext)s"
         PLAYLIST_TEMPLATE = r"%(playlist)s/%(title)s.%(id)s.%(ext)s"
         
-        is_playlist = 'playlist' in self.meta or Config.is_playlist_or_channel_url(self.webpage_url)
+        # Check for truthy 'playlist' value; the key often exists with None for single videos
+        is_playlist = bool(self.meta.get('playlist')) or Config.is_playlist_or_channel_url(self.webpage_url)
         template = PLAYLIST_TEMPLATE if is_playlist else VIDEO_TEMPLATE
         
         args = [
@@ -355,7 +363,6 @@ class YTDLManager:
 
     @staticmethod
     def dl_meta_from_url(url: str) -> Tuple[bool, Optional[str]]:
-        context = {"URL": url}
         try:
             if not os.path.exists(Config.META_DIR):
                 os.makedirs(Config.META_DIR)
@@ -373,12 +380,11 @@ class YTDLManager:
             if not Config.is_playlist_or_channel_url(url):
                 args.append('--no-playlist')
 
-            returncode, full_log = SubprocessRunner.run(args, context)
+            returncode, full_log = SubprocessRunner.run(args, {"URL": url})
 
             if returncode == 0:
                 return True, None
 
-            context["Terminal Output"] = f"```\n{full_log}\n```"
             error_msg = f"Failed to download metadata. yt-dlp exited with code {returncode}"
             
             specific_error = YTDLManager._detect_specific_error(full_log)
@@ -388,11 +394,13 @@ class YTDLManager:
             else:
                 exception_to_report = DownloadError(error_msg)
 
-            Logger.report_error(error_msg, context={**context, "Exception": exception_to_report})
+            Logger.report_error(error_msg, ctx=ErrorContext(
+                url=url, log_output=f"```\n{full_log}\n```", exception=exception_to_report))
             return False, SubprocessRunner.extract_yt_dlp_error(full_log)
 
         except Exception as e:
-            Logger.report_error(f"Error fetching metadata.", context={"URL": url, "Error": str(e), "Traceback": traceback.format_exc(), "Exception": DownloadError(str(e))})
+            Logger.report_error(f"Error fetching metadata.", ctx=ErrorContext(
+                url=url, traceback_str=traceback.format_exc(), exception=DownloadError(str(e))))
             return False, str(e)
 
     @staticmethod
@@ -411,10 +419,9 @@ class YTDLManager:
     @staticmethod
     def download_video(video: Video) -> Tuple[bool, Optional[str]]:
         logging.info(f"--- Downloading: {video.title} ---")
-        context = {"Video Title": video.title, "Video URL": video.webpage_url}
         try:
             args = video.get_download_args()
-            returncode, full_log = SubprocessRunner.run(args, context)
+            returncode, full_log = SubprocessRunner.run(args, {"Title": video.title, "URL": video.webpage_url})
 
             if returncode == 0:
                 os.remove(video.meta_filepath)
@@ -422,7 +429,6 @@ class YTDLManager:
             
             error_message = f"Download failed. yt-dlp exited with code {returncode}."
             extracted_error = SubprocessRunner.extract_yt_dlp_error(full_log)
-            context['Terminal Log'] = f"```\n{full_log}\n```"
             
             specific_error = YTDLManager._detect_specific_error(full_log)
             if specific_error:
@@ -431,11 +437,15 @@ class YTDLManager:
             else:
                 exception_to_report = DownloadError(error_message)
 
-            Logger.report_error(error_message, context={**context, "Exception": exception_to_report})
+            Logger.report_error(error_message, ctx=ErrorContext(
+                url=video.webpage_url, title=video.title,
+                log_output=f"```\n{full_log}\n```", exception=exception_to_report))
             return False, extracted_error
 
         except Exception as e:
-            Logger.report_error(f"Unexpected error during download.", context={"Traceback": traceback.format_exc(), "Exception": DownloadError(str(e)), **context})
+            Logger.report_error(f"Unexpected error during download.", ctx=ErrorContext(
+                url=video.webpage_url, title=video.title,
+                traceback_str=traceback.format_exc(), exception=DownloadError(str(e))))
             return False, str(e)
 
     @staticmethod
@@ -445,7 +455,8 @@ class YTDLManager:
                 os.rmdir(Config.META_DIR)
                 logging.info("Empty meta directory deleted.")
             except OSError as e:
-                Logger.report_error(f"Error deleting empty meta directory.", context={"Error": str(e), "Exception": MetadataError(str(e))})
+                Logger.report_error(f"Error deleting empty meta directory.", ctx=ErrorContext(
+                    exception=MetadataError(str(e)), extra={"Error": str(e)}))
 
     @staticmethod
     def update_self():
@@ -478,7 +489,8 @@ class YTDLManager:
                 os.remove("self_update.py")
                 
         except Exception:
-            Logger.report_error(traceback.format_exc(), context={"Exception": UpdateError("Self-update failed")})
+            Logger.report_error(traceback.format_exc(), ctx=ErrorContext(
+                traceback_str=traceback.format_exc(), exception=UpdateError("Self-update failed")))
 
     @staticmethod
     def update_yt_dlp():
@@ -531,7 +543,8 @@ def main():
     except KeyboardInterrupt:
         sys.exit(0)
     except Exception as e:
-        Logger.report_error("Critical error in main loop", context={"Traceback": traceback.format_exc(), "Exception": YTDLError(f"Critical: {e}")})
+        Logger.report_error("Critical error in main loop", ctx=ErrorContext(
+            traceback_str=traceback.format_exc(), exception=YTDLError(f"Critical: {e}")))
         input("Press ENTER to exit.")
 
 if __name__ == "__main__":

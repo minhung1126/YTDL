@@ -6,7 +6,7 @@ import time
 import traceback
 import threading
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, font
+from tkinter import ttk, scrolledtext, messagebox
 import subprocess
 import YTDL 
 
@@ -83,7 +83,7 @@ class ClipboardWatcherApp:
                 except Exception as e:
                     YTDL.Logger.report_error(
                         f"Failed to delete meta directory: {YTDL.Config.META_DIR}",
-                        context={"Error": str(e)}
+                        ctx=YTDL.ErrorContext(extra={"Error": str(e)})
                     )
             else:
                 # Resume: start downloading from existing meta files
@@ -275,7 +275,7 @@ class ClipboardWatcherApp:
         except Exception:
             error_message = "A critical error occurred during the download process."
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_error"]))
-            YTDL.Logger.report_error(error_message, context={"Traceback": traceback.format_exc()})
+            YTDL.Logger.report_error(error_message, ctx=YTDL.ErrorContext(traceback_str=traceback.format_exc()))
 
     def _check_download_thread(self):
         if self.download_thread.is_alive():
@@ -304,7 +304,7 @@ if __name__ == "__main__":
         app = ClipboardWatcherApp(root)
         root.mainloop()
     except Exception:
-        YTDL.Logger.report_error("A critical error occurred on startup.", context={"Traceback": traceback.format_exc()})
+        YTDL.Logger.report_error("A critical error occurred on startup.", ctx=YTDL.ErrorContext(traceback_str=traceback.format_exc()))
         try:
             root = tk.Tk()
             root.withdraw()
