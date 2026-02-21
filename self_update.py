@@ -2,6 +2,8 @@ import sys
 sys.dont_write_bytecode = True
 import os
 import io
+import re
+import time
 import subprocess
 import traceback
 import platform
@@ -14,6 +16,20 @@ try:
 except ImportError:
     print("[FATAL] requests library not found. Cannot proceed with update.", file=sys.stderr)
     sys.exit(1)
+
+def _http_get_with_retry(url, max_retries=3, **kwargs):
+    """GET request with exponential backoff retry."""
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, **kwargs)
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as e:
+            last_exc = e
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+    raise last_exc
 
 def report_error_updater(message: str, webhook_url: str):
     """
@@ -41,8 +57,8 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
         # 1. Configuration
         ffmpeg_tag = version_tag
         if not ffmpeg_tag:
-            if hasattr(YTDL_module, '_DevConfig'):
-                ffmpeg_tag = getattr(YTDL_module._DevConfig, 'FFMPEG_VERSION_TAG', None)
+            if hasattr(YTDL_module, 'Config'):
+                ffmpeg_tag = getattr(YTDL_module.Config, 'FFMPEG_VERSION_TAG', None)
 
         if not ffmpeg_tag:
             return
@@ -67,7 +83,6 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
                 res = subprocess.run([ffmpeg_exe, '-version'], capture_output=True, text=True, encoding='utf-8', errors='ignore')
                 
                 # Extract --extra-version=YYYYMMDD
-                import re
                 match = re.search(r'--extra-version=(\d+)', res.stdout)
                 
                 if match:
@@ -98,14 +113,11 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
         # 4. Download and Extract
         print(f"Downloading FFmpeg {ffmpeg_tag}...")
         
-        # Dynamically construct URL based on version tag
-        # Use 'latest' for the download ensuring we get the newest release regardless of the specific date tag
         download_tag = "latest"
         zip_url = f"https://github.com/yt-dlp/FFmpeg-Builds/releases/download/{download_tag}/ffmpeg-master-{download_tag}-win64-gpl.zip"
         
         print(f"Download URL: {zip_url}")
-        resp = requests.get(zip_url, timeout=300)
-        resp.raise_for_status()
+        resp = _http_get_with_retry(zip_url, timeout=(10, 300))
         
         print("Extracting FFmpeg binaries...")
         with ZipFile(io.BytesIO(resp.content)) as z:
@@ -146,16 +158,12 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
         report_error_updater(f"FFmpeg update failed: {e}\n{traceback.format_exc()}", webhook_url)
 
 def update_binary(YTDL_module, webhook_url: str):
-    """Updates binary dependencies like yt-dlp and deno based on versions in the YTDL module."""
-    # --- yt-dlp Update ---
-    # yt-dlp update is now handled by YTDL.py on startup.
-    # We no longer update it here to avoid double-checking or conflicts.
-    pass
+    """Updates binary dependencies like deno and FFmpeg based on versions in the YTDL module."""
 
     # --- Deno Update ---
     try:
-        if hasattr(YTDL_module, '_DevConfig'):
-            deno_version = getattr(YTDL_module._DevConfig, 'DENO_VERSION', None)
+        if hasattr(YTDL_module, 'Config'):
+            deno_version = getattr(YTDL_module.Config, 'DENO_VERSION', None)
         else:
             deno_version = getattr(YTDL_module, 'DENO_VERSION', None)
 
@@ -190,8 +198,7 @@ def update_binary(YTDL_module, webhook_url: str):
             deno_zip_url = f"https://github.com/denoland/deno/releases/download/v{deno_version}/deno-x86_64-pc-windows-msvc.zip"
             print(f"Downloading Deno for Windows from {deno_zip_url}...")
 
-            resp = requests.get(deno_zip_url, timeout=60)
-            resp.raise_for_status()
+            resp = _http_get_with_retry(deno_zip_url, timeout=(10, 60))
 
             with ZipFile(io.BytesIO(resp.content)) as z:
                 print("Extracting deno.exe...")
@@ -217,15 +224,13 @@ def program_files_update(webhook_url: str):
 
     try:
         print("Fetching latest release information...")
-        resp = requests.get(f"{api_url}/releases/latest", timeout=10)
-        resp.raise_for_status()
+        resp = _http_get_with_retry(f"{api_url}/releases/latest", timeout=10)
         release_data = resp.json()
         zipfile_url = release_data['zipball_url']
         print(f'Release zip url: {zipfile_url}')
 
         print("Downloading latest release zip...")
-        zipfile_content_resp = requests.get(zipfile_url, timeout=30)
-        zipfile_content_resp.raise_for_status()
+        zipfile_content_resp = _http_get_with_retry(zipfile_url, timeout=(10, 60))
         zipfile_content = io.BytesIO(zipfile_content_resp.content)
 
         to_extract_filenames = ["YTDL.py", "YTDL_mul.py"]

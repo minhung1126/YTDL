@@ -1,6 +1,14 @@
 **/__pycache__
 **/temp
 
-
-
 .vscode/
+
+# PyInstaller
+*.spec
+build/
+dist/
+
+# Runtime artifacts
+meta/
+*.log
+*.exe

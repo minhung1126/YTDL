@@ -42,7 +42,21 @@ class DependencyManager:
 DependencyManager.check_and_install("requests")
 import requests
 
-class _DevConfig:
+def _http_get_with_retry(url, max_retries=3, **kwargs):
+    """GET request with exponential backoff retry."""
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, **kwargs)
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as e:
+            last_exc = e
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+    raise last_exc
+
+class Config:
     # yt-dlp Versioning
     YT_DLP_VERSION_CHANNEL = "nightly"
     # YT_DLP_VERSION_TAG is no longer used; always checks latest nightly
@@ -81,7 +95,8 @@ class _DevConfig:
     DISCORD_WEBHOOK = base64.b64decode(_DISCORD_WEBHOOK_ENCODED).decode('utf-8') if _DISCORD_WEBHOOK_ENCODED else ""
 
     # Paths and Environment
-    META_DIR = os.path.join(os.getcwd(), 'meta')
+    _APP_DIR = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+    META_DIR = os.path.join(_APP_DIR, 'meta')
     EXECUTABLE = 'yt-dlp'
     CONCURRENT_FRAGMENTS = "2"
     PROGRESS_BAR_SECONDS = "2"
@@ -93,7 +108,13 @@ class _DevConfig:
     def is_youtube_url(url: str) -> bool:
         if not url:
             return False
-        return bool(re.search(_DevConfig.YOUTUBE_REGEX, url, re.IGNORECASE))
+        return bool(re.search(Config.YOUTUBE_REGEX, url, re.IGNORECASE))
+
+    @staticmethod
+    def is_playlist_or_channel_url(url: str) -> bool:
+        """Check if a URL points to a playlist or channel."""
+        parsed = urlparse(url)
+        return '/playlist' in parsed.path or '/channel/' in parsed.path or '/c/' in parsed.path or parsed.path.startswith('/@')
 
 class YTDLError(Exception):
     """Base class for YTDL exceptions."""
@@ -200,7 +221,7 @@ class Logger:
             logging.error(f"--- Full {log_key} Log ---\n{log_content}")
 
         # Discord Notification
-        if _DevConfig.DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in _DevConfig.DISCORD_WEBHOOK:
+        if Config.DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in Config.DISCORD_WEBHOOK:
             try:
                 final_report = f"🚨 **YTDL Error Report:**\n{computer_info}\n**Error Type:** `{error_type}`\n{context_message}**Error:**\n```\n{full_message}\n```"
                 discord_payload = {"content": final_report}
@@ -209,9 +230,9 @@ class Logger:
                     log_filename = f"{log_key.replace(' ', '_').lower()}.txt"
                     log_stream = io.BytesIO(log_content.encode('utf-8'))
                     files = {"file": (log_filename, log_stream, "text/plain")}
-                    requests.post(_DevConfig.DISCORD_WEBHOOK, data={"payload_json": json.dumps(discord_payload)}, files=files, timeout=10)
+                    requests.post(Config.DISCORD_WEBHOOK, data={"payload_json": json.dumps(discord_payload)}, files=files, timeout=10)
                 else:
-                    requests.post(_DevConfig.DISCORD_WEBHOOK, json=discord_payload, timeout=10)
+                    requests.post(Config.DISCORD_WEBHOOK, json=discord_payload, timeout=10)
             except Exception as e:
                 logging.critical(f"Failed to send error report to Discord: {e}")
 
@@ -247,6 +268,11 @@ class SubprocessRunner:
 
             full_log = "".join(stdout_lines) + "".join(stderr_lines)
             return process.returncode, full_log
+        except FileNotFoundError:
+            error_msg = f"Executable not found: {args[0] if args else 'N/A'}. Ensure it is installed and in PATH."
+            Logger.report_error(error_msg, context={
+                         "Exception": SubprocessError(error_msg), **context})
+            return -1, error_msg
         except Exception as e:
             Logger.report_error(f"An unexpected error occurred during subprocess execution.", context={
                          "Traceback": traceback.format_exc(), "Exception": SubprocessError(str(e)), **context})
@@ -276,7 +302,7 @@ class Video:
     def _read_meta(self) -> dict:
         try:
             with open(self.meta_filepath, 'r', encoding='utf-8') as f:
-                return json.loads(f.read())
+                return json.load(f)
         except Exception as e:
             Logger.report_error(f"Failed to read or parse meta file: {self.meta_filepath}", context={
                          "Traceback": traceback.format_exc(), "Exception": MetadataError(str(e))})
@@ -287,29 +313,26 @@ class Video:
         VIDEO_TEMPLATE = r"%(title)s.%(id)s.%(ext)s"
         PLAYLIST_TEMPLATE = r"%(playlist)s/%(title)s.%(id)s.%(ext)s"
         
-        is_playlist = 'playlist' in self.meta
-        parsed_url = urlparse(self.webpage_url)
-        is_channel = '/channel/' in parsed_url.path or '/c/' in parsed_url.path or parsed_url.path.startswith('/@')
-        
-        template = PLAYLIST_TEMPLATE if is_playlist or is_channel else VIDEO_TEMPLATE
+        is_playlist = 'playlist' in self.meta or Config.is_playlist_or_channel_url(self.webpage_url)
+        template = PLAYLIST_TEMPLATE if is_playlist else VIDEO_TEMPLATE
         
         args = [
-            _DevConfig.EXECUTABLE,
+            Config.EXECUTABLE,
             '-f', 'bv+ba',
             '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr',
             '--embed-subs', '--sub-langs', 'all,-live_chat',
             '--embed-thumbnail', '--embed-metadata',
             '--merge-output-format', 'mkv', '--remux-video', 'mkv',
             '--encoding', 'utf-8',
-            '--concurrent-fragments', _DevConfig.CONCURRENT_FRAGMENTS,
-            '--progress-delta', _DevConfig.PROGRESS_BAR_SECONDS,
+            '--concurrent-fragments', Config.CONCURRENT_FRAGMENTS,
+            '--progress-delta', Config.PROGRESS_BAR_SECONDS,
             '-o', template,
             '--load-info-json', self.meta_filepath,
             '--verbose'
         ]
 
-        if _DevConfig.FFMPEG_BINARY:
-            args.extend(['--ffmpeg-location', _DevConfig.FFMPEG_BINARY])
+        if Config.FFMPEG_BINARY:
+            args.extend(['--ffmpeg-location', Config.FFMPEG_BINARY])
         
         return args
 
@@ -334,24 +357,20 @@ class YTDLManager:
     def dl_meta_from_url(url: str) -> Tuple[bool, Optional[str]]:
         context = {"URL": url}
         try:
-            if not os.path.exists(_DevConfig.META_DIR):
-                os.makedirs(_DevConfig.META_DIR)
+            if not os.path.exists(Config.META_DIR):
+                os.makedirs(Config.META_DIR)
             
             args = [
-                _DevConfig.EXECUTABLE,
+                Config.EXECUTABLE,
                 '--no-download',
                 '--no-write-playlist-metafiles', '-o',
-                os.path.join(_DevConfig.META_DIR, f"%(title)s.%(id)s"),
+                os.path.join(Config.META_DIR, f"%(title)s.%(id)s"),
                 '--write-info-json', '--encoding', 'utf-8', '--verbose',
-                '--concurrent-fragments', _DevConfig.CONCURRENT_FRAGMENTS,
+                '--concurrent-fragments', Config.CONCURRENT_FRAGMENTS,
                 url
             ]
             
-            parsed_url = urlparse(url)
-            is_playlist = '/playlist' in parsed_url.path
-            is_channel = '/channel/' in parsed_url.path or '/c/' in parsed_url.path or parsed_url.path.startswith('/@')
-
-            if not is_playlist and not is_channel:
+            if not Config.is_playlist_or_channel_url(url):
                 args.append('--no-playlist')
 
             returncode, full_log = SubprocessRunner.run(args, context)
@@ -378,13 +397,13 @@ class YTDLManager:
 
     @staticmethod
     def load_videos() -> List[Video]:
-        if not os.path.isdir(_DevConfig.META_DIR):
+        if not os.path.isdir(Config.META_DIR):
             return []
         videos = []
-        for f in os.listdir(_DevConfig.META_DIR):
+        for f in os.listdir(Config.META_DIR):
             if not f.endswith('.json'):
                 continue
-            v = Video(os.path.join(_DevConfig.META_DIR, f))
+            v = Video(os.path.join(Config.META_DIR, f))
             if v.is_valid:
                 videos.append(v)
         return videos
@@ -421,9 +440,9 @@ class YTDLManager:
 
     @staticmethod
     def cleanup_meta():
-        if os.path.isdir(_DevConfig.META_DIR) and not os.listdir(_DevConfig.META_DIR):
+        if os.path.isdir(Config.META_DIR) and not os.listdir(Config.META_DIR):
             try:
-                os.rmdir(_DevConfig.META_DIR)
+                os.rmdir(Config.META_DIR)
                 logging.info("Empty meta directory deleted.")
             except OSError as e:
                 Logger.report_error(f"Error deleting empty meta directory.", context={"Error": str(e), "Exception": MetadataError(str(e))})
@@ -439,22 +458,18 @@ class YTDLManager:
         try:
             repo = "minhung1126/YTDL"
             api_url = f"https://api.github.com/repos/{repo}/releases/latest"
-            response = requests.get(api_url, timeout=5)
-            response.raise_for_status()
+            response = _http_get_with_retry(api_url, timeout=5)
             latest_version = response.json()["tag_name"]
             
             if latest_version != __version__:
                 logging.info(f"New version found: {latest_version}. Updating...")
                 updater_script_name = "self_update.py"
                 base_url = f"https://raw.githubusercontent.com/{repo}/main/"
-                resp = requests.get(f"{base_url}{updater_script_name}")
-                if resp.ok:
-                    with open(updater_script_name, 'wb') as f:
-                        f.write(resp.content)
-                    subprocess.Popen([sys.executable, updater_script_name, os.path.abspath(sys.argv[0]), _DevConfig.DISCORD_WEBHOOK])
-                    sys.exit(0)
-                else:
-                    Logger.report_error(f"Failed to download updater: {resp.status_code}")
+                resp = _http_get_with_retry(f"{base_url}{updater_script_name}", timeout=15)
+                with open(updater_script_name, 'wb') as f:
+                    f.write(resp.content)
+                subprocess.Popen([sys.executable, updater_script_name, os.path.abspath(sys.argv[0]), Config.DISCORD_WEBHOOK])
+                sys.exit(0)
             else:
                 logging.info("You are using the latest version.")
                 
@@ -469,24 +484,14 @@ class YTDLManager:
     def update_yt_dlp():
         """Checks for yt-dlp updates (dynamic nightly check)."""
         try:
-            channel = _DevConfig.YT_DLP_VERSION_CHANNEL
+            channel = Config.YT_DLP_VERSION_CHANNEL
             logging.info(f"Checking for yt-dlp updates ({channel})...")
             # We use --update-to [channel] which automatically checks if a newer version is available
-            subprocess.run([_DevConfig.EXECUTABLE, '--update-to', channel], check=True)
+            subprocess.run([Config.EXECUTABLE, '--update-to', channel], check=True)
         except Exception as e:
              logging.error(f"Failed to check/update yt-dlp: {e}")
 
-# This setup_logging is effectively an alias now for backward compatibility if needed, 
-# but preferably we use Logger.setup()
-setup_logging = Logger.setup
-report_error = Logger.report_error
-dl_meta_from_url = YTDLManager.dl_meta_from_url
-load_videos_from_meta = YTDLManager.load_videos
-clean_empty_meta_dir = YTDLManager.cleanup_meta # Alias if needed
-# Aliases for compatibility with YTDL_mul.py until it is refactored
-YOUTUBE_REGEX = _DevConfig.YOUTUBE_REGEX
-META_DIR = _DevConfig.META_DIR
-initialize_app = lambda x: YTDLManager.update_self()
+
 
 def main():
     Logger.setup()
@@ -495,10 +500,10 @@ def main():
         YTDLManager.update_yt_dlp() # Ensure yt-dlp is always latest nightly
         while True:
             # Simple CLI Interaction
-            if os.path.isdir(_DevConfig.META_DIR) and os.listdir(_DevConfig.META_DIR):
+            if os.path.isdir(Config.META_DIR) and os.listdir(Config.META_DIR):
                 resp = input("Found temp files. Continue downloading? (Y/N) ").lower()
                 if resp == 'n':
-                    shutil.rmtree(_DevConfig.META_DIR)
+                    shutil.rmtree(Config.META_DIR)
                 elif resp != 'y':
                     sys.exit(1)
 
@@ -506,7 +511,7 @@ def main():
             if resp.lower() == 'exit':
                 sys.exit(0)
             
-            if _DevConfig.is_youtube_url(resp):
+            if Config.is_youtube_url(resp):
                 success, error = YTDLManager.dl_meta_from_url(resp)
                 if not success:
                     print(f"ERROR: {error}")

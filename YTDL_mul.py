@@ -1,5 +1,7 @@
 import sys
+import os
 import re
+import shutil
 import time
 import traceback
 import threading
@@ -60,6 +62,7 @@ class ClipboardWatcherApp:
         self.detected_urls = set()
         self.clipboard_after_id = None
         self.download_thread = None
+        self._cancel_download = threading.Event()
 
         self.setup_widgets()
         self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -69,22 +72,22 @@ class ClipboardWatcherApp:
 
     def check_and_handle_existing_meta(self):
         """Check if there are unfinished downloads and ask user if they want to continue."""
-        import os
-        import shutil
-        
-        if os.path.isdir(YTDL._DevConfig.META_DIR) and os.listdir(YTDL._DevConfig.META_DIR):
+        if os.path.isdir(YTDL.Config.META_DIR) and os.listdir(YTDL.Config.META_DIR):
             result = self._show_resume_dialog(
                 UI_TEXT["msg_resume_download_title"],
                 UI_TEXT["msg_resume_download_body"]
             )
             if not result:
                 try:
-                    shutil.rmtree(YTDL._DevConfig.META_DIR)
+                    shutil.rmtree(YTDL.Config.META_DIR)
                 except Exception as e:
                     YTDL.Logger.report_error(
-                        f"Failed to delete meta directory: {YTDL._DevConfig.META_DIR}",
+                        f"Failed to delete meta directory: {YTDL.Config.META_DIR}",
                         context={"Error": str(e)}
                     )
+            else:
+                # Resume: start downloading from existing meta files
+                self.master.after(100, self._resume_from_meta)
     
     def _show_resume_dialog(self, title, message):
         dialog = tk.Toplevel(self.master)
@@ -180,7 +183,7 @@ class ClipboardWatcherApp:
         try:
             current_clipboard = pyperclip.paste()
             if current_clipboard:
-                found_urls = re.findall(YTDL._DevConfig.YOUTUBE_REGEX, current_clipboard)
+                found_urls = re.findall(YTDL.Config.YOUTUBE_REGEX, current_clipboard)
                 for url in found_urls:
                     if url not in self.detected_urls:
                         self.detected_urls.add(url)
@@ -189,6 +192,7 @@ class ClipboardWatcherApp:
             self.toggle_watching()
             YTDL.Logger.report_error(f"Failed to access clipboard.\n{traceback.format_exc()}")
             self.status_var.set(UI_TEXT["status_clipboard_error"])
+            return
         self.clipboard_after_id = self.master.after(1000, self.poll_clipboard)
 
     def update_url_display(self, text):
@@ -203,6 +207,16 @@ class ClipboardWatcherApp:
             messagebox.showwarning("下載失敗 | Download Failed", f"錯誤原因 | Error Reason:\n{error_msg}")
         self.master.after(0, show)
 
+    def _resume_from_meta(self):
+        """Start downloading from existing meta files (resume flow)."""
+        self.watch_button.config(state=tk.DISABLED)
+        self.download_button.config(state=tk.DISABLED)
+        self.status_var.set(UI_TEXT["status_meta_done"])
+        self._cancel_download.clear()
+        self.download_thread = threading.Thread(target=self._download_worker, args=([],), daemon=True)
+        self.download_thread.start()
+        self._check_download_thread()
+
     def start_download(self):
         if self.download_thread and self.download_thread.is_alive():
             messagebox.showwarning(UI_TEXT["msg_download_in_progress_title"], UI_TEXT["msg_download_in_progress_body"])
@@ -214,6 +228,7 @@ class ClipboardWatcherApp:
         self.watch_button.config(state=tk.DISABLED)
         self.download_button.config(state=tk.DISABLED)
         self.status_var.set(UI_TEXT["status_starting_download"])
+        self._cancel_download.clear()
 
         urls_to_download = list(self.detected_urls)
         self.detected_urls.clear()
@@ -227,22 +242,28 @@ class ClipboardWatcherApp:
 
     def _download_worker(self, urls):
         try:
-            self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_processing_meta"].format(count=len(urls))))
-            for url in urls:
-                success, error = YTDL.YTDLManager.dl_meta_from_url(url)
-                if not success:
-                    self._schedule_error_popup(error)
+            if urls:
+                self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_processing_meta"].format(count=len(urls))))
+                for url in urls:
+                    if self._cancel_download.is_set():
+                        return
+                    success, error = YTDL.YTDLManager.dl_meta_from_url(url)
+                    if not success:
+                        self._schedule_error_popup(error)
 
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_meta_done"]))
             videos_to_download = YTDL.YTDLManager.load_videos()
             total_videos = len(videos_to_download)
             for i, video in enumerate(videos_to_download):
+                if self._cancel_download.is_set():
+                    break
                 title = video.title[:25]
                 self.master.after(0, lambda i=i, t=title: self.status_var.set(UI_TEXT["status_downloading"].format(i=i+1, total=total_videos, title=t)))
                 success, error = YTDL.YTDLManager.download_video(video)
                 if not success:
                     self._schedule_error_popup(error)
 
+            YTDL.YTDLManager.cleanup_meta()
             self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_all_done"]))
         except Exception:
             error_message = "A critical error occurred during the download process."
@@ -259,6 +280,7 @@ class ClipboardWatcherApp:
     def on_closing(self):
         if self.download_thread and self.download_thread.is_alive():
             if messagebox.askokcancel(UI_TEXT["msg_quit_title"], UI_TEXT["msg_quit_body"]):
+                self._cancel_download.set()
                 self.master.destroy()
         else:
             self.master.destroy()
