@@ -18,7 +18,7 @@ from typing import Tuple, List, Optional, Dict, Any
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.02.18.07"
+__version__ = "v2026.02.21.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
