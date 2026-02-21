@@ -3,6 +3,7 @@ import json
 import shutil
 import subprocess
 import re
+import threading
 from urllib.parse import urlparse
 import sys
 import traceback
@@ -166,15 +167,7 @@ class Logger:
 
         # Check for Exception object in context to determine Error Type
         if "Exception" in context and isinstance(context["Exception"], Exception):
-            exc = context["Exception"]
-            if isinstance(exc, YTDLError):
-                error_type = type(exc).__name__
-            else:
-                error_type = type(exc).__name__
-        elif "Error" in context and isinstance(context["Error"], str):
-             # Fallback if Error is passed as string but we can't determine type easily, 
-             # though usually it enters here as string representation.
-             pass
+            error_type = type(context["Exception"]).__name__
 
         # Extract log/traceback for attachment
         for key, value in context.items():
@@ -243,7 +236,6 @@ class SubprocessRunner:
                         print(line.strip(), file=output_file)
                 stream.close()
 
-            import threading
             stdout_thread = threading.Thread(target=stream_reader, args=(process.stdout, stdout_lines, sys.stdout))
             stderr_thread = threading.Thread(target=stream_reader, args=(process.stderr, stderr_lines, sys.stderr))
 
@@ -390,6 +382,8 @@ class YTDLManager:
             return []
         videos = []
         for f in os.listdir(_DevConfig.META_DIR):
+            if not f.endswith('.json'):
+                continue
             v = Video(os.path.join(_DevConfig.META_DIR, f))
             if v.is_valid:
                 videos.append(v)

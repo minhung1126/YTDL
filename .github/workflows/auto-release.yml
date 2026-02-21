@@ -52,10 +52,11 @@ jobs:
           # yt-dlp
           Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "yt-dlp.exe"
           
-          # ffmpeg
-          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip"
+          # ffmpeg (from yt-dlp/FFmpeg-Builds, same source as self_update.py)
+          Invoke-WebRequest -Uri "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
           Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp"
-          Get-ChildItem -Path "ffmpeg_temp\*\bin\*.exe" | Move-Item -Destination .
+          Get-ChildItem -Path "ffmpeg_temp\*\bin\ffmpeg.exe"  | ForEach-Object { Copy-Item $_.FullName -Destination "yt-dlp-ffmpeg.exe" }
+          Get-ChildItem -Path "ffmpeg_temp\*\bin\ffprobe.exe" | ForEach-Object { Copy-Item $_.FullName -Destination "yt-dlp-ffprobe.exe" }
           
           # Deno
           $denoVer = "${{ steps.version_extractor.outputs.deno_version }}"
@@ -70,7 +71,7 @@ jobs:
         run: |
           $ver = "${{ steps.version_extractor.outputs.version }}"
           $zipName = "YTDL.${ver}.Windows.zip"
-          Compress-Archive -Path "dist\YTDL.exe", "yt-dlp.exe", "ffmpeg.exe", "ffprobe.exe", "deno.exe" -DestinationPath $zipName
+          Compress-Archive -Path "dist\YTDL.exe", "yt-dlp.exe", "yt-dlp-ffmpeg.exe", "yt-dlp-ffprobe.exe", "deno.exe" -DestinationPath $zipName
 
       - name: "Package Source Code"
         if: steps.version_extractor.outputs.version != 'dev'
