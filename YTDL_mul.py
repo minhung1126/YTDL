@@ -225,6 +225,13 @@ class ClipboardWatcherApp:
             messagebox.showinfo(UI_TEXT["msg_no_urls_title"], UI_TEXT["msg_no_urls_body"])
             return
 
+        # Stop clipboard watching before clearing state to prevent re-detection
+        if self.is_watching:
+            self.is_watching = False
+            if self.clipboard_after_id:
+                self.master.after_cancel(self.clipboard_after_id)
+            self.watch_button.config(text=UI_TEXT["start_detecting"])
+
         self.watch_button.config(state=tk.DISABLED)
         self.download_button.config(state=tk.DISABLED)
         self.status_var.set(UI_TEXT["status_starting_download"])
