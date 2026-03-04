@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.02.21.02"
+__version__ = "v2026.03.04.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -371,7 +371,7 @@ class YTDLManager:
                 Config.EXECUTABLE,
                 '--no-download',
                 '--no-write-playlist-metafiles', '-o',
-                os.path.join(Config.META_DIR, f"%(title)s.%(id)s"),
+                os.path.join(Config.META_DIR, "%(autonumber)s_%(id)s"),
                 '--write-info-json', '--encoding', 'utf-8', '--verbose',
                 '--concurrent-fragments', Config.CONCURRENT_FRAGMENTS,
                 url
