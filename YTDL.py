@@ -119,39 +119,44 @@ class Config:
 
 class YTDLError(Exception):
     """Base class for YTDL exceptions."""
-    pass
+    report = True
+    reason_title_zh_tw = "發生未知的錯誤"
 
 class DownloadError(YTDLError):
     """Raised when download or metadata fetching fails."""
-    pass
+    reason_title_zh_tw = "下載或獲取詮釋資料失敗"
 
 class PrivateVideoError(DownloadError):
     """Raised when video is private."""
-    pass
+    report = False
+    reason_title_zh_tw = "私人影片，無法下載"
 
 class VideoUnavailableError(DownloadError):
     """Raised when video is 404/deleted."""
-    pass
+    report = False
+    reason_title_zh_tw = "影片已遭刪除或無法存取"
 
 class AgeRestrictedError(DownloadError):
     """Raised when video requires age verification."""
-    pass
+    report = False
+    reason_title_zh_tw = "影片有年齡限制，無法下載"
 
 class PremiumRequiredError(DownloadError):
     """Raised when video requires membership."""
-    pass
+    report = False
+    reason_title_zh_tw = "此為會員專屬影片，無法下載"
 
 class MetadataError(YTDLError):
     """Raised when metadata file operations fail."""
-    pass
+    reason_title_zh_tw = "讀取或寫入影片資訊操作失敗"
 
 class UpdateError(YTDLError):
     """Raised when self-update fails."""
-    pass
+    reason_title_zh_tw = "程式自動更新失敗"
 
 class SubprocessError(YTDLError):
     """Raised when a subprocess execution fails unexpectedly."""
-    pass
+    reason_title_zh_tw = "外部程式執行失敗"
 
 @dataclass
 class ErrorContext:
@@ -221,7 +226,11 @@ class Logger:
             logging.error(f"--- Full {log_label} Log ---\n{log_content}")
 
         # Discord Notification
-        if Config.DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in Config.DISCORD_WEBHOOK:
+        should_report_discord = True
+        if isinstance(ctx.exception, YTDLError) and not ctx.exception.report:
+            should_report_discord = False
+
+        if should_report_discord and Config.DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in Config.DISCORD_WEBHOOK:
             try:
                 final_report = f"🚨 **YTDL Error Report:**\n{computer_info}\n**Error Type:** `{error_type}`\n{context_message}**Error:**\n```\n{message}\n```"
                 discord_payload = {"content": final_report}
@@ -394,14 +403,17 @@ class YTDLManager:
             else:
                 exception_to_report = DownloadError(error_msg)
 
+            extracted_error = f"{exception_to_report.reason_title_zh_tw}\n詳細錯誤: {SubprocessRunner.extract_yt_dlp_error(full_log)}"
+
             Logger.report_error(error_msg, ctx=ErrorContext(
                 url=url, log_output=f"```\n{full_log}\n```", exception=exception_to_report))
-            return False, SubprocessRunner.extract_yt_dlp_error(full_log)
+            return False, extracted_error
 
         except Exception as e:
+            err_obj = DownloadError(str(e))
             Logger.report_error(f"Error fetching metadata.", ctx=ErrorContext(
-                url=url, traceback_str=traceback.format_exc(), exception=DownloadError(str(e))))
-            return False, str(e)
+                url=url, traceback_str=traceback.format_exc(), exception=err_obj))
+            return False, f"{err_obj.reason_title_zh_tw}\n詳細錯誤: {str(e)}"
 
     @staticmethod
     def load_videos() -> List[Video]:
@@ -428,7 +440,6 @@ class YTDLManager:
                 return True, None
             
             error_message = f"Download failed. yt-dlp exited with code {returncode}."
-            extracted_error = SubprocessRunner.extract_yt_dlp_error(full_log)
             
             specific_error = YTDLManager._detect_specific_error(full_log)
             if specific_error:
@@ -437,16 +448,19 @@ class YTDLManager:
             else:
                 exception_to_report = DownloadError(error_message)
 
+            extracted_error = f"{exception_to_report.reason_title_zh_tw}\n詳細錯誤: {SubprocessRunner.extract_yt_dlp_error(full_log)}"
+
             Logger.report_error(error_message, ctx=ErrorContext(
                 url=video.webpage_url, title=video.title,
                 log_output=f"```\n{full_log}\n```", exception=exception_to_report))
             return False, extracted_error
 
         except Exception as e:
+            err_obj = DownloadError(str(e))
             Logger.report_error(f"Unexpected error during download.", ctx=ErrorContext(
                 url=video.webpage_url, title=video.title,
-                traceback_str=traceback.format_exc(), exception=DownloadError(str(e))))
-            return False, str(e)
+                traceback_str=traceback.format_exc(), exception=err_obj))
+            return False, f"{err_obj.reason_title_zh_tw}\n詳細錯誤: {str(e)}"
 
     @staticmethod
     def cleanup_meta():
