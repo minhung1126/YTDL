@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.06.03.02"
+__version__ = "v2026.06.03.03"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -307,12 +307,28 @@ class SubprocessRunner:
         return lines[-1] if lines else "Unknown Error"
 
 class Video:
+    PRESERVED_METADATA_FIELDS = (
+        "playlist",
+        "playlist_id",
+        "playlist_title",
+        "playlist_uploader",
+        "playlist_uploader_id",
+        "playlist_channel",
+        "playlist_channel_id",
+        "playlist_webpage_url",
+        "playlist_index",
+        "playlist_count",
+    )
+
     def __init__(self, meta_filepath: str):
         self.meta_filepath = meta_filepath
         self.meta = self._read_meta()
         self.is_valid = bool(self.meta)
         
-        self.webpage_url = self.meta.get("webpage_url", "")
+        self.webpage_url = self.meta.get("webpage_url") or self.meta.get("original_url", "")
+        self.playlist = self.meta.get("playlist") or self.meta.get("playlist_title", "")
+        self.playlist_url = self.meta.get("playlist_webpage_url") or self.meta.get("playlist_url", "")
+        self.playlist_index = self.meta.get("playlist_index")
         self.title = self.meta.get("title", "N/A")
         
     def _read_meta(self) -> dict:
@@ -330,7 +346,7 @@ class Video:
         PLAYLIST_TEMPLATE = r"%(playlist)s/%(title)s.%(id)s.%(ext)s"
         
         # Check for truthy 'playlist' value; the key often exists with None for single videos
-        is_playlist = bool(self.meta.get('playlist')) or Config.is_playlist_or_channel_url(self.webpage_url)
+        is_playlist = bool(self.playlist) or bool(self.playlist_url) or Config.is_playlist_or_channel_url(self.webpage_url)
         template = PLAYLIST_TEMPLATE if is_playlist else VIDEO_TEMPLATE
         
         args = [
@@ -344,14 +360,51 @@ class Video:
             '--concurrent-fragments', Config.CONCURRENT_FRAGMENTS,
             '--progress-delta', Config.PROGRESS_BAR_SECONDS,
             '-o', template,
-            '--load-info-json', self.meta_filepath,
             '--verbose'
         ]
 
         if Config.FFMPEG_BINARY:
             args.extend(['--ffmpeg-location', Config.FFMPEG_BINARY])
+
+        args.extend(self._get_preserved_metadata_args())
+
+        source_args = self._get_fresh_source_args()
+        args.extend(source_args)
         
         return args
+
+    def _get_preserved_metadata_args(self) -> list:
+        args = []
+        for field in self.PRESERVED_METADATA_FIELDS:
+            value = self.meta.get(field)
+            if value is None or value == "":
+                continue
+            args.extend(['--parse-metadata', f"{self._escape_metadata_value(value)}:%({field})s"])
+
+        if self.playlist:
+            args.extend(['--parse-metadata', f"{self._escape_metadata_value(self.playlist)}:%(meta_album)s"])
+        if self.playlist_index is not None:
+            args.extend(['--parse-metadata', f"{self._escape_metadata_value(self.playlist_index)}:%(meta_track)s"])
+
+        return args
+
+    @staticmethod
+    def _escape_metadata_value(value) -> str:
+        return str(value).replace('\\', '\\\\').replace('%', '%%').replace(':', '\\:').replace('\r', ' ').replace('\n', ' ')
+
+    def _get_fresh_source_args(self) -> list:
+        if self.playlist_url and self.playlist_index is not None:
+            return ['--playlist-items', str(self.playlist_index), self.playlist_url]
+
+        if self.webpage_url:
+            args = []
+            if not Config.is_playlist_or_channel_url(self.webpage_url):
+                args.append('--no-playlist')
+            args.append(self.webpage_url)
+            return args
+
+        logging.warning(f"Missing webpage URL in meta file; falling back to stale info json: {self.meta_filepath}")
+        return ['--load-info-json', self.meta_filepath]
 
 class YTDLManager:
     @staticmethod
