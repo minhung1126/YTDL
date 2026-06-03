@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.06.03.03"
+__version__ = "v2026.06.03.04"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -325,9 +325,10 @@ class Video:
         self.meta = self._read_meta()
         self.is_valid = bool(self.meta)
         
-        self.webpage_url = self.meta.get("webpage_url") or self.meta.get("original_url", "")
-        self.playlist = self.meta.get("playlist") or self.meta.get("playlist_title", "")
-        self.playlist_url = self.meta.get("playlist_webpage_url") or self.meta.get("playlist_url", "")
+        self.webpage_url = self._clean_meta_value(self.meta.get("webpage_url")) or self._clean_meta_value(self.meta.get("original_url"))
+        self.playlist = self._clean_meta_value(self.meta.get("playlist")) or self._clean_meta_value(self.meta.get("playlist_title"))
+        self.playlist_id = self._clean_meta_value(self.meta.get("playlist_id"))
+        self.playlist_url = self._clean_meta_value(self.meta.get("playlist_webpage_url")) or self._clean_meta_value(self.meta.get("playlist_url"))
         self.playlist_index = self.meta.get("playlist_index")
         self.title = self.meta.get("title", "N/A")
         
@@ -342,12 +343,9 @@ class Video:
 
     def get_download_args(self) -> list:
         # Determine template based on content type
-        VIDEO_TEMPLATE = r"%(title)s.%(id)s.%(ext)s"
-        PLAYLIST_TEMPLATE = r"%(playlist)s/%(title)s.%(id)s.%(ext)s"
-        
         # Check for truthy 'playlist' value; the key often exists with None for single videos
         is_playlist = bool(self.playlist) or bool(self.playlist_url) or Config.is_playlist_or_channel_url(self.webpage_url)
-        template = PLAYLIST_TEMPLATE if is_playlist else VIDEO_TEMPLATE
+        template = self._get_output_template(is_playlist)
         
         args = [
             Config.EXECUTABLE,
@@ -377,7 +375,7 @@ class Video:
         args = []
         for field in self.PRESERVED_METADATA_FIELDS:
             value = self.meta.get(field)
-            if value is None or value == "":
+            if self._clean_meta_value(value) == "":
                 continue
             args.extend(['--parse-metadata', f"{self._escape_metadata_value(value)}:%({field})s"])
 
@@ -392,6 +390,13 @@ class Video:
     def _escape_metadata_value(value) -> str:
         return str(value).replace('\\', '\\\\').replace('%', '%%').replace(':', '\\:').replace('\r', ' ').replace('\n', ' ')
 
+    @staticmethod
+    def _clean_meta_value(value) -> str:
+        if value is None:
+            return ""
+        value = str(value).strip()
+        return "" if value.upper() == "NA" else value
+
     def _get_fresh_source_args(self) -> list:
         if self.playlist_url and self.playlist_index is not None:
             return ['--playlist-items', str(self.playlist_index), self.playlist_url]
@@ -405,6 +410,36 @@ class Video:
 
         logging.warning(f"Missing webpage URL in meta file; falling back to stale info json: {self.meta_filepath}")
         return ['--load-info-json', self.meta_filepath]
+
+    def _get_output_template(self, is_playlist: bool) -> str:
+        video_template = r"%(title)s.%(id)s.%(ext)s"
+        if not is_playlist:
+            return video_template
+
+        folder_name = self.playlist or self.playlist_id or "Playlist"
+        folder_name = self._escape_output_template_value(self._sanitize_path_part(folder_name))
+        return f"{folder_name}/{video_template}"
+
+    @staticmethod
+    def _escape_output_template_value(value: str) -> str:
+        return value.replace('%', '%%')
+
+    @staticmethod
+    def _sanitize_path_part(value) -> str:
+        value = str(value).strip()
+        value = re.sub(r'[\x00-\x1f<>:"/\\|?*]+', '_', value)
+        value = re.sub(r'\s+', ' ', value).strip(' .')
+
+        reserved_names = {
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        }
+        if not value:
+            return "Playlist"
+        if value.upper() in reserved_names:
+            return f"_{value}"
+        return value
 
 class YTDLManager:
     @staticmethod
