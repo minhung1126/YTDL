@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.06.03.04"
+__version__ = "v2026.06.04.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -364,7 +364,8 @@ class Video:
         if Config.FFMPEG_BINARY:
             args.extend(['--ffmpeg-location', Config.FFMPEG_BINARY])
 
-        args.extend(self._get_preserved_metadata_args())
+        if not (self.playlist_url and self.playlist_index is not None):
+            args.extend(self._get_preserved_metadata_args())
 
         source_args = self._get_fresh_source_args()
         args.extend(source_args)
@@ -377,18 +378,19 @@ class Video:
             value = self.meta.get(field)
             if self._clean_meta_value(value) == "":
                 continue
-            args.extend(['--parse-metadata', f"{self._escape_metadata_value(value)}:%({field})s"])
+            args.extend(['--parse-metadata', f"{self._metadata_constant_source(value)}:%({field})s"])
 
         if self.playlist:
-            args.extend(['--parse-metadata', f"{self._escape_metadata_value(self.playlist)}:%(meta_album)s"])
+            args.extend(['--parse-metadata', f"{self._metadata_constant_source(self.playlist)}:%(meta_album)s"])
         if self.playlist_index is not None:
-            args.extend(['--parse-metadata', f"{self._escape_metadata_value(self.playlist_index)}:%(meta_track)s"])
+            args.extend(['--parse-metadata', f"{self._metadata_constant_source(self.playlist_index)}:%(meta_track)s"])
 
         return args
 
     @staticmethod
-    def _escape_metadata_value(value) -> str:
-        return str(value).replace('\\', '\\\\').replace('%', '%%').replace(':', '\\:').replace('\r', ' ').replace('\n', ' ')
+    def _metadata_constant_source(value) -> str:
+        value = str(value).replace('\\', '\\\\').replace('%', '%%').replace(':', '\\:').replace('\r', ' ').replace('\n', ' ')
+        return f"%(id&{value}|)s"
 
     @staticmethod
     def _clean_meta_value(value) -> str:
