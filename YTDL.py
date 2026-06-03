@@ -530,6 +530,15 @@ def main():
                 resp = input("Found temp files. Continue downloading? (Y/N) ").lower()
                 if resp == 'n':
                     shutil.rmtree(Config.META_DIR)
+                elif resp == 'y':
+                    videos = YTDLManager.load_videos()
+                    for vid in videos:
+                        success, error = YTDLManager.download_video(vid)
+                        if not success:
+                            print(f"Error downloading {vid.title}: {error}")
+
+                    YTDLManager.cleanup_meta()
+                    logging.info("Batch complete.")
                 elif resp != 'y':
                     sys.exit(1)
 
