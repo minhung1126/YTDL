@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.03.04.01"
+__version__ = "v2026.06.03.02"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
