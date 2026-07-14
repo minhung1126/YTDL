@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.06.04.01"
+__version__ = "v2026.07.14.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -66,7 +66,7 @@ class Config:
     DENO_VERSION = "2.5.4"
 
     # FFmpeg Configuration
-    FFMPEG_VERSION_TAG = "20260218"
+    FFMPEG_VERSION_TAG = "20260712"
     
     _yt_dlp_path = shutil.which('yt-dlp')
     _yt_dlp_dir = os.path.dirname(_yt_dlp_path) if _yt_dlp_path else None
