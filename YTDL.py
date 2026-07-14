@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.07.14.01"
+__version__ = "v2026.07.14.02"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -355,6 +355,7 @@ class Video:
             '--embed-thumbnail', '--embed-metadata',
             '--merge-output-format', 'mkv', '--remux-video', 'mkv',
             '--encoding', 'utf-8',
+            '--force-ipv4',
             '--concurrent-fragments', Config.CONCURRENT_FRAGMENTS,
             '--progress-delta', Config.PROGRESS_BAR_SECONDS,
             '-o', template,
@@ -472,6 +473,7 @@ class YTDLManager:
                 '--no-write-playlist-metafiles', '-o',
                 os.path.join(Config.META_DIR, "%(autonumber)s_%(id)s"),
                 '--write-info-json', '--encoding', 'utf-8', '--verbose',
+                '--force-ipv4',
                 '--concurrent-fragments', Config.CONCURRENT_FRAGMENTS,
                 url
             ]
