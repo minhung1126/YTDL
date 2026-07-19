@@ -2,12 +2,10 @@ import sys
 import os
 import re
 import shutil
-import time
 import traceback
 import threading
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
-import subprocess
 import YTDL 
 
 sys.dont_write_bytecode = True
@@ -15,9 +13,6 @@ sys.dont_write_bytecode = True
 # Initialize logging immediately
 YTDL.Logger.setup()
 
-# Check and install dependencies via YTDL's manager if valid, currently we just use the try-except block here or delegate.
-# Since YTDL 2.0 has DependencyManager, we can use it to ensure pyperclip is there?
-# However, YTDL's DependencyManager isn't explicitly exposing a public 'check' for everything, but has check_and_install.
 YTDL.DependencyManager.check_and_install("pyperclip")
 import pyperclip
 
@@ -296,9 +291,6 @@ if __name__ == "__main__":
     root = None
     startup_window = None
     try:
-        # Clear clipboard at startup
-        pyperclip.copy('')
-
         # Run the shared startup lifecycle synchronously, while showing its
         # current stage before the main downloader window is available.
         root = tk.Tk()

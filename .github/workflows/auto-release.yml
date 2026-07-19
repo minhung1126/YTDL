@@ -27,17 +27,14 @@ jobs:
           VERSION=$(grep '^__version__' YTDL.py | cut -d '"' -f 2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
       - name: "Package Source Code"
-        if: steps.version_extractor.outputs.version != 'dev'
         run: |
           zip "YTDL.${{ steps.version_extractor.outputs.version }}.zip" YTDL.py YTDL_mul.py
 
       - name: "Prepare release notes"
-        if: steps.version_extractor.outputs.version != 'dev'
         run: |
           echo '點開 `Assets` 並下載 `YTDL.${{ steps.version_extractor.outputs.version }}.zip`（原始碼）。' > release_notes.md
 
       - name: "Create Release"
-        if: steps.version_extractor.outputs.version != 'dev'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash

@@ -130,12 +130,8 @@ def update_ffmpeg(YTDL_module, webhook_url: str, minimum_build_date: str = None)
         minimum_build_date_value = int(configured_minimum)
 
         # 2. Target Directory
-        # Resolve yt-dlp location to find where to put ffmpeg
-        yt_dlp_path = shutil.which('yt-dlp')
-        target_dir = os.getcwd() 
-        if yt_dlp_path:
-            target_dir = os.path.dirname(yt_dlp_path)
-            
+        target_dir = _portable_target_dir(YTDL_module)
+
         ffmpeg_exe = os.path.join(target_dir, 'yt-dlp-ffmpeg.exe')
         ffprobe_exe = os.path.join(target_dir, 'yt-dlp-ffprobe.exe')
         
@@ -231,17 +227,6 @@ def update_ffmpeg(YTDL_module, webhook_url: str, minimum_build_date: str = None)
             )
                         
         print(f"FFmpeg update completed. Binaries placed in {target_dir}")
-
-        # TODO: Remove this legacy cleanup in future versions (e.g. after 2026.06)
-        # Cleanup legacy non-prefixed binaries
-        for legacy_bin in ['ffmpeg.exe', 'ffprobe.exe', 'ffplay.exe']:
-            legacy_path = os.path.join(target_dir, legacy_bin)
-            if os.path.exists(legacy_path):
-                try:
-                    os.remove(legacy_path)
-                    print(f"Removed legacy binary: {legacy_bin}")
-                except OSError as e:
-                    print(f"Failed to remove legacy binary {legacy_bin}: {e}")
 
         return True
 
@@ -472,11 +457,6 @@ def ensure_pot_provider(YTDL_module, webhook_url: str) -> bool:
     return bool(deno_path and update_pot_provider(YTDL_module, webhook_url, deno_path))
 
 
-def update_binary(YTDL_module, webhook_url: str):
-    """Updates portable Deno, the PO provider, and FFmpeg after an app update."""
-    ensure_pot_provider(YTDL_module, webhook_url)
-    update_ffmpeg(YTDL_module, webhook_url)
-
 def program_files_update(webhook_url: str):
     cwd = os.getcwd()
     api_url = "https://api.github.com/repos/minhung1126/YTDL"
@@ -520,7 +500,8 @@ def program_files_update(webhook_url: str):
         report_error_updater(f"Failed to import the updated YTDL.py module.\n{traceback.format_exc()}", webhook_url)
         return False
 
-    update_binary(YTDL, webhook_url)
+    ensure_pot_provider(YTDL, webhook_url)
+    update_ffmpeg(YTDL, webhook_url)
     
     # --- Final Cleanup ---
     print("==================================================")

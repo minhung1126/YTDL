@@ -14,13 +14,13 @@ import io
 import time
 from datetime import datetime, timezone
 from uuid import uuid4
-from typing import Tuple, List, Optional, Dict, Any, Callable
+from typing import Tuple, List, Optional, Dict, Callable
 from dataclasses import dataclass, field
 
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.07.20.03"
+__version__ = "v2026.07.20.04"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -88,12 +88,6 @@ class Config:
         if _yt_dlp_dir and os.path.isfile(os.path.join(_yt_dlp_dir, "yt-dlp-ffmpeg.exe"))
         else None
     )
-    FFPROBE_BINARY = (
-        os.path.join(_yt_dlp_dir, "yt-dlp-ffprobe.exe")
-        if _yt_dlp_dir and os.path.isfile(os.path.join(_yt_dlp_dir, "yt-dlp-ffprobe.exe"))
-        else None
-    )
-
     @classmethod
     def get_ffmpeg_paths(cls) -> Dict[str, str]:
         """Return the portable FFmpeg and FFprobe locations next to yt-dlp."""
@@ -105,11 +99,10 @@ class Config:
 
     @classmethod
     def refresh_ffmpeg_binaries(cls) -> bool:
-        """Refresh portable binary paths after an FFmpeg repair or update."""
+        """Refresh the portable FFmpeg path after an FFmpeg repair or update."""
         paths = cls.get_ffmpeg_paths()
         cls.FFMPEG_BINARY = paths["ffmpeg"] if os.path.isfile(paths["ffmpeg"]) else None
-        cls.FFPROBE_BINARY = paths["ffprobe"] if os.path.isfile(paths["ffprobe"]) else None
-        return bool(cls.FFMPEG_BINARY and cls.FFPROBE_BINARY)
+        return bool(cls.FFMPEG_BINARY)
 
     @classmethod
     def ffmpeg_status(cls) -> Tuple[bool, str]:
@@ -250,19 +243,6 @@ class Config:
                 f"expected {cls.BGUTIL_POT_PROVIDER_VERSION}, got {marker.get('version')!r}"
             )
         return True, "ready"
-
-    @classmethod
-    def get_youtube_pot_args(cls) -> List[str]:
-        """Return script-provider arguments only when the local provider is ready."""
-        ready, _ = cls.pot_provider_status()
-        if not ready:
-            return []
-        paths = cls.get_pot_provider_paths()
-        return [
-            "--js-runtimes", f"deno:{paths['deno']}",
-            "--extractor-args",
-            f"youtubepot-bgutilscript:server_home={paths['server_home']}",
-        ]
 
 class YTDLError(Exception):
     """Base class for YTDL exceptions."""
@@ -632,11 +612,15 @@ class Video:
 
         source_url = self.webpage_url or self.playlist_url
         if Config.is_youtube_url(source_url):
-            pot_args = Config.get_youtube_pot_args()
-            if pot_args:
-                args.extend(pot_args)
+            pot_provider_ready, reason = Config.pot_provider_status()
+            if pot_provider_ready:
+                paths = Config.get_pot_provider_paths()
+                args.extend([
+                    "--js-runtimes", f"deno:{paths['deno']}",
+                    "--extractor-args",
+                    f"youtubepot-bgutilscript:server_home={paths['server_home']}",
+                ])
             else:
-                ready, reason = Config.pot_provider_status()
                 logging.warning("YouTube PO Token provider is unavailable; downloading without it: %s", reason)
 
         if not (self.playlist_url and self.playlist_index is not None):
@@ -747,6 +731,50 @@ class YTDLManager:
         return None
 
     @staticmethod
+    def _report_yt_dlp_failure(
+        operation: str,
+        failure_message: str,
+        returncode: int,
+        full_log: str,
+        url: str = "",
+        title: str = "",
+    ) -> str:
+        specific_error = YTDLManager._detect_specific_error(full_log)
+        exception_to_report = specific_error or DownloadError(failure_message)
+        message = str(specific_error) if specific_error else failure_message
+        extracted_error = (
+            f"{exception_to_report.reason_title_zh_tw}\n"
+            f"詳細錯誤: {SubprocessRunner.extract_yt_dlp_error(full_log)}"
+        )
+        error_id = Logger.report_error(message, ctx=ErrorContext(
+            operation=operation,
+            url=url,
+            title=title,
+            log_output=f"```\n{full_log}\n```",
+            exception=exception_to_report,
+            extra={"Exit code": str(returncode)},
+        ))
+        return f"{extracted_error}\n錯誤代碼: {error_id}"
+
+    @staticmethod
+    def _report_download_exception(
+        operation: str,
+        message: str,
+        exception: Exception,
+        url: str = "",
+        title: str = "",
+    ) -> str:
+        err_obj = DownloadError(str(exception))
+        error_id = Logger.report_error(message, ctx=ErrorContext(
+            operation=operation,
+            url=url,
+            title=title,
+            traceback_str=traceback.format_exc(),
+            exception=err_obj,
+        ))
+        return f"{err_obj.reason_title_zh_tw}\n詳細錯誤: {exception}\n錯誤代碼: {error_id}"
+
+    @staticmethod
     def dl_meta_from_url(url: str) -> Tuple[bool, Optional[str]]:
         try:
             if not os.path.exists(Config.META_DIR):
@@ -771,27 +799,18 @@ class YTDLManager:
             if returncode == 0:
                 return True, None
 
-            error_msg = f"Failed to download metadata. yt-dlp exited with code {returncode}"
-            
-            specific_error = YTDLManager._detect_specific_error(full_log)
-            if specific_error:
-                exception_to_report = specific_error
-                error_msg = str(specific_error)
-            else:
-                exception_to_report = DownloadError(error_msg)
-
-            extracted_error = f"{exception_to_report.reason_title_zh_tw}\n詳細錯誤: {SubprocessRunner.extract_yt_dlp_error(full_log)}"
-
-            error_id = Logger.report_error(error_msg, ctx=ErrorContext(
-                operation="Fetch metadata", url=url, log_output=f"```\n{full_log}\n```",
-                exception=exception_to_report, extra={"Exit code": str(returncode)}))
-            return False, f"{extracted_error}\n錯誤代碼: {error_id}"
+            return False, YTDLManager._report_yt_dlp_failure(
+                "Fetch metadata",
+                f"Failed to download metadata. yt-dlp exited with code {returncode}",
+                returncode,
+                full_log,
+                url=url,
+            )
 
         except Exception as e:
-            err_obj = DownloadError(str(e))
-            error_id = Logger.report_error(f"Error fetching metadata.", ctx=ErrorContext(
-                operation="Fetch metadata", url=url, traceback_str=traceback.format_exc(), exception=err_obj))
-            return False, f"{err_obj.reason_title_zh_tw}\n詳細錯誤: {str(e)}\n錯誤代碼: {error_id}"
+            return False, YTDLManager._report_download_exception(
+                "Fetch metadata", "Error fetching metadata.", e, url=url
+            )
 
     @staticmethod
     def load_videos() -> List[Video]:
@@ -817,29 +836,35 @@ class YTDLManager:
                 os.remove(video.meta_filepath)
                 return True, None
             
-            error_message = f"Download failed. yt-dlp exited with code {returncode}."
-            
-            specific_error = YTDLManager._detect_specific_error(full_log)
-            if specific_error:
-                exception_to_report = specific_error
-                error_message = str(specific_error)
-            else:
-                exception_to_report = DownloadError(error_message)
-
-            extracted_error = f"{exception_to_report.reason_title_zh_tw}\n詳細錯誤: {SubprocessRunner.extract_yt_dlp_error(full_log)}"
-
-            error_id = Logger.report_error(error_message, ctx=ErrorContext(
-                operation="Download video", url=video.webpage_url, title=video.title,
-                log_output=f"```\n{full_log}\n```", exception=exception_to_report,
-                extra={"Exit code": str(returncode)}))
-            return False, f"{extracted_error}\n錯誤代碼: {error_id}"
+            return False, YTDLManager._report_yt_dlp_failure(
+                "Download video",
+                f"Download failed. yt-dlp exited with code {returncode}.",
+                returncode,
+                full_log,
+                url=video.webpage_url,
+                title=video.title,
+            )
 
         except Exception as e:
-            err_obj = DownloadError(str(e))
-            error_id = Logger.report_error(f"Unexpected error during download.", ctx=ErrorContext(
-                operation="Download video", url=video.webpage_url, title=video.title,
-                traceback_str=traceback.format_exc(), exception=err_obj))
-            return False, f"{err_obj.reason_title_zh_tw}\n詳細錯誤: {str(e)}\n錯誤代碼: {error_id}"
+            return False, YTDLManager._report_download_exception(
+                "Download video",
+                "Unexpected error during download.",
+                e,
+                url=video.webpage_url,
+                title=video.title,
+            )
+
+    @staticmethod
+    def download_pending_videos():
+        """Download every valid metadata file currently queued in the meta directory."""
+        videos = YTDLManager.load_videos()
+        for video in videos:
+            success, error = YTDLManager.download_video(video)
+            if not success:
+                print(f"Error downloading {video.title}: {error}")
+
+        YTDLManager.cleanup_meta()
+        logging.info("Batch complete.")
 
     @staticmethod
     def cleanup_meta():
@@ -897,15 +922,25 @@ class YTDLManager:
              logging.error(f"Failed to check/update yt-dlp: {e}")
 
     @staticmethod
-    def ensure_ffmpeg():
-        """Repair portable FFmpeg tools when either required binary is missing."""
-        ready, reason = Config.ffmpeg_status()
+    def _ensure_component_with_updater(
+        status_check: Callable[[], Tuple[bool, str]],
+        updater_flag: str,
+        ready_message: str,
+        repair_subject: str,
+        output_label: str,
+        verification_failure_message: str,
+        repair_failure_message: str,
+        on_ready: Optional[Callable[[], None]] = None,
+    ) -> bool:
+        """Use self_update.py to repair one portable dependency when needed."""
+        ready, reason = status_check()
         if ready:
-            Config.refresh_ffmpeg_binaries()
-            logging.info("Portable FFmpeg and FFprobe are ready.")
+            if on_ready:
+                on_ready()
+            logging.info(ready_message)
             return True
 
-        logging.info("Portable FFmpeg tools need repair: %s", reason)
+        logging.info("%s need repair: %s", repair_subject, reason)
         updater_path = os.path.join(Config._APP_DIR, "self_update.py")
         downloaded_updater = False
         try:
@@ -918,7 +953,7 @@ class YTDLManager:
                 downloaded_updater = True
 
             result = subprocess.run(
-                [sys.executable, updater_path, "--ensure-ffmpeg", Config.DISCORD_WEBHOOK],
+                [sys.executable, updater_path, updater_flag, Config.DISCORD_WEBHOOK],
                 cwd=Config._APP_DIR,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -930,12 +965,12 @@ class YTDLManager:
             )
             output = result.stdout.strip()
             if output:
-                logging.info("FFmpeg repair output:\n%s", output[-8000:])
+                logging.info("%s repair output:\n%s", output_label, output[-8000:])
             if result.returncode != 0:
-                logging.error("FFmpeg repair exited with code %s.", result.returncode)
+                logging.error("%s repair exited with code %s.", output_label, result.returncode)
                 return False
         except Exception:
-            logging.error("Unable to repair portable FFmpeg tools.\n%s", traceback.format_exc())
+            logging.error(repair_failure_message, traceback.format_exc())
             return False
         finally:
             if downloaded_updater:
@@ -944,64 +979,40 @@ class YTDLManager:
                 except OSError:
                     logging.warning("Unable to remove temporary updater: %s", updater_path)
 
-        ready, reason = Config.ffmpeg_status()
+        ready, reason = status_check()
         if ready:
-            Config.refresh_ffmpeg_binaries()
+            if on_ready:
+                on_ready()
         else:
-            logging.error("FFmpeg repair completed but tools are not ready: %s", reason)
+            logging.error(verification_failure_message, reason)
         return ready
+
+    @staticmethod
+    def ensure_ffmpeg():
+        """Repair portable FFmpeg tools when either required binary is missing."""
+        return YTDLManager._ensure_component_with_updater(
+            Config.ffmpeg_status,
+            "--ensure-ffmpeg",
+            "Portable FFmpeg and FFprobe are ready.",
+            "Portable FFmpeg tools",
+            "FFmpeg",
+            "FFmpeg repair completed but tools are not ready: %s",
+            "Unable to repair portable FFmpeg tools.\n%s",
+            Config.refresh_ffmpeg_binaries,
+        )
 
     @staticmethod
     def ensure_pot_provider():
         """Repair the portable provider only when its local integrity check fails."""
-        ready, reason = Config.pot_provider_status()
-        if ready:
-            logging.info("YouTube PO Token provider is ready.")
-            return True
-
-        logging.info("YouTube PO Token provider needs repair: %s", reason)
-        updater_path = os.path.join(Config._APP_DIR, "self_update.py")
-        downloaded_updater = False
-        try:
-            if not os.path.isfile(updater_path):
-                repo = "minhung1126/YTDL"
-                updater_url = f"https://raw.githubusercontent.com/{repo}/main/self_update.py"
-                response = _http_get_with_retry(updater_url, timeout=15)
-                with open(updater_path, "wb") as f:
-                    f.write(response.content)
-                downloaded_updater = True
-
-            result = subprocess.run(
-                [sys.executable, updater_path, "--ensure-pot-provider", Config.DISCORD_WEBHOOK],
-                cwd=Config._APP_DIR,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=900,
-            )
-            output = result.stdout.strip()
-            if output:
-                logging.info("PO provider repair output:\n%s", output[-8000:])
-            if result.returncode != 0:
-                logging.error("PO provider repair exited with code %s.", result.returncode)
-                return False
-        except Exception:
-            logging.error("Unable to repair YouTube PO Token provider.\n%s", traceback.format_exc())
-            return False
-        finally:
-            if downloaded_updater:
-                try:
-                    os.remove(updater_path)
-                except OSError:
-                    logging.warning("Unable to remove temporary updater: %s", updater_path)
-
-        ready, reason = Config.pot_provider_status()
-        if not ready:
-            logging.error("PO provider repair completed but is not ready: %s", reason)
-        return ready
+        return YTDLManager._ensure_component_with_updater(
+            Config.pot_provider_status,
+            "--ensure-pot-provider",
+            "YouTube PO Token provider is ready.",
+            "YouTube PO Token provider",
+            "PO provider",
+            "PO provider repair completed but is not ready: %s",
+            "Unable to repair YouTube PO Token provider.\n%s",
+        )
 
     @staticmethod
     def run_startup_maintenance(progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, bool]:
@@ -1045,14 +1056,7 @@ def main():
                 if resp == 'n':
                     shutil.rmtree(Config.META_DIR)
                 elif resp == 'y':
-                    videos = YTDLManager.load_videos()
-                    for vid in videos:
-                        success, error = YTDLManager.download_video(vid)
-                        if not success:
-                            print(f"Error downloading {vid.title}: {error}")
-
-                    YTDLManager.cleanup_meta()
-                    logging.info("Batch complete.")
+                    YTDLManager.download_pending_videos()
                 elif resp != 'y':
                     sys.exit(1)
 
@@ -1066,14 +1070,7 @@ def main():
                     print(f"ERROR: {error}")
                     continue
                 
-                videos = YTDLManager.load_videos()
-                for vid in videos:
-                    success, error = YTDLManager.download_video(vid)
-                    if not success:
-                        print(f"Error downloading {vid.title}: {error}")
-                
-                YTDLManager.cleanup_meta()
-                logging.info("Batch complete.")
+                YTDLManager.download_pending_videos()
             else:
                 logging.warning("Invalid URL.")
 
