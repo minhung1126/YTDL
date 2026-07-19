@@ -2,14 +2,18 @@ import sys
 sys.dont_write_bytecode = True
 import os
 import io
+import json
 import re
 import time
 import subprocess
 import traceback
 import platform
-import socket
 import shutil
+from datetime import datetime, timezone
+from uuid import uuid4
 from zipfile import ZipFile
+
+MAX_DIAGNOSTIC_BYTES = 8 * 1024 * 1024
 
 try:
     import requests
@@ -31,25 +35,50 @@ def _http_get_with_retry(url, max_retries=3, **kwargs):
                 time.sleep(2 ** attempt)
     raise last_exc
 
-def report_error_updater(message: str, webhook_url: str):
+def report_error_updater(message: str, webhook_url: str, operation: str = "Self-update") -> str:
     """
-    A self-contained error reporter for the updater script.
-    Prints the error and sends it to a Discord webhook if configured.
+    Report an updater failure with an ID that is shared by its console output,
+    local Discord notification, and attached diagnostic text.
     """
-    try:
-        user = os.getlogin()
-    except OSError:
-        user = os.environ.get("USERNAME", "N/A")
-    computer_info = f"**Computer:** `{socket.gethostname()}` (`{user}`) | **OS:** `{platform.system()} {platform.release()}`"
+    error_id = f"UPD-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:6].upper()}"
+    environment = f"OS: {platform.system()} {platform.release()}"
 
-    print(f"[ERROR] An error occurred during update:\n{computer_info}\n{message}", file=sys.stderr)
+    print(
+        f"[ERROR] {error_id} | {operation}\n{environment}\n{message}",
+        file=sys.stderr,
+    )
     
     if webhook_url:
         try:
-            payload = {"content": f"🚨 **YTDL Updater Error:**\n{computer_info}\n**Error:**\n```\n{message[:1600]}\n```"}
-            requests.post(webhook_url, json=payload, timeout=10)
+            diagnostic_bytes = message.encode("utf-8")
+            if len(diagnostic_bytes) > MAX_DIAGNOSTIC_BYTES:
+                marker = (
+                    b"[Diagnostic output exceeded 8 MiB; the beginning was omitted. "
+                    b"The remainder below is the most recent output.]\n\n"
+                )
+                diagnostic_bytes = marker + diagnostic_bytes[-(MAX_DIAGNOSTIC_BYTES - len(marker)):]
+            content = (
+                f"🚨 **YTDL Updater Error** `{error_id}`\n"
+                f"**Operation:** {operation}\n"
+                f"**Environment:** {environment}\n"
+                "**Diagnostic:** attached `updater_error.txt`\n"
+                f"**Error:**\n```\n{message}\n```"
+            )
+            content_limit = 1900
+            if len(content) > content_limit:
+                suffix = "\n…訊息過長，完整內容請見附加的診斷檔。"
+                content = content[:content_limit - len(suffix)] + suffix
+            response = requests.post(
+                webhook_url,
+                data={"payload_json": json.dumps({"content": content})},
+                files={"file": ("updater_error.txt", io.BytesIO(diagnostic_bytes), "text/plain")},
+                timeout=10,
+            )
+            response.raise_for_status()
         except Exception as e:
-            print(f"[CRITICAL] Failed to send updater error report to Discord: {e}", file=sys.stderr)
+            print(f"[CRITICAL] {error_id} | Failed to send updater error report to Discord: {e}", file=sys.stderr)
+
+    return error_id
 
 def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
     """Updates FFmpeg/FFprobe binaries if needed."""

@@ -8,11 +8,12 @@ from urllib.parse import urlparse
 import sys
 import traceback
 import platform
-import socket
 import base64
 import logging
 import io
 import time
+from datetime import datetime, timezone
+from uuid import uuid4
 from typing import Tuple, List, Optional, Dict, Any
 from dataclasses import dataclass, field
 
@@ -163,6 +164,7 @@ class SubprocessError(YTDLError):
 @dataclass
 class ErrorContext:
     """Standardized error context for Logger.report_error."""
+    operation: str = ""
     url: str = ""
     title: str = ""
     traceback_str: str = ""
@@ -171,6 +173,9 @@ class ErrorContext:
     extra: Dict[str, str] = field(default_factory=dict)
 
 class Logger:
+    DISCORD_CONTENT_LIMIT = 1900
+    MAX_DIAGNOSTIC_BYTES = 8 * 1024 * 1024
+
     @staticmethod
     def setup():
         log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -179,7 +184,9 @@ class Logger:
 
         # Clear existing handlers to avoid duplicates if setup is called multiple times
         if logger.hasHandlers():
-            logger.handlers.clear()
+            for handler in logger.handlers[:]:
+                logger.removeHandler(handler)
+                handler.close()
 
         # A .py file can be associated with pythonw.exe on Windows. In that
         # case both standard streams are None, so console logging must be
@@ -202,17 +209,56 @@ class Logger:
 
     @staticmethod
     def _get_system_info() -> str:
-        try:
-            user = os.getlogin()
-        except OSError:
-            user = os.environ.get("USERNAME", "N/A")
-        return f"**Computer:** `{socket.gethostname()}` (`{user}`) | **OS:** `{platform.system()} {platform.release()}` | **Ver:** `{__version__}`"
+        """Return diagnostic details that do not identify the user's machine."""
+        return f"OS: {platform.system()} {platform.release()} | App version: {__version__}"
 
     @staticmethod
-    def report_error(message: str, ctx: Optional[ErrorContext] = None):
+    def _new_error_id() -> str:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        return f"ERR-{timestamp}-{uuid4().hex[:6].upper()}"
+
+    @staticmethod
+    def _truncate_for_discord(value: str) -> str:
+        if len(value) <= Logger.DISCORD_CONTENT_LIMIT:
+            return value
+        suffix = "\n…訊息過長，完整內容請見附加的診斷檔。"
+        return value[:Logger.DISCORD_CONTENT_LIMIT - len(suffix)] + suffix
+
+    @staticmethod
+    def _diagnostic_attachment(log_content: str) -> io.BytesIO:
+        """Keep an upload small enough for standard Discord webhook limits."""
+        content_bytes = log_content.encode("utf-8")
+        if len(content_bytes) <= Logger.MAX_DIAGNOSTIC_BYTES:
+            return io.BytesIO(content_bytes)
+        marker = (
+            b"[Diagnostic output exceeded 8 MiB; the beginning was omitted. "
+            b"The remainder below is the most recent output.]\n\n"
+        )
+        return io.BytesIO(marker + content_bytes[-(Logger.MAX_DIAGNOSTIC_BYTES - len(marker)):])
+
+    @staticmethod
+    def _send_discord_report(payload: dict, log_content: Optional[str], log_label: Optional[str]):
+        """Send one bounded Discord notification and surface webhook failures locally."""
+        if log_content:
+            log_filename = f"{log_label.replace(' ', '_').lower()}.txt"
+            log_stream = Logger._diagnostic_attachment(log_content)
+            response = requests.post(
+                Config.DISCORD_WEBHOOK,
+                data={"payload_json": json.dumps(payload)},
+                files={"file": (log_filename, log_stream, "text/plain")},
+                timeout=10,
+            )
+        else:
+            response = requests.post(Config.DISCORD_WEBHOOK, json=payload, timeout=10)
+        response.raise_for_status()
+
+    @staticmethod
+    def report_error(message: str, ctx: Optional[ErrorContext] = None) -> str:
+        """Log an error and return a short ID that links UI, local log, and Discord."""
         if ctx is None:
             ctx = ErrorContext()
-        
+
+        error_id = Logger._new_error_id()
         computer_info = Logger._get_system_info()
         error_type = type(ctx.exception).__name__ if ctx.exception else "Generic Error"
 
@@ -226,21 +272,33 @@ class Logger:
             log_content = ctx.traceback_str
             log_label = "Traceback"
 
-        # Build context message for Discord
-        context_message = ""
+        # Build a concise, actionable summary. Full subprocess output or a
+        # traceback is attached separately so Discord's content limit cannot
+        # hide the useful fields.
+        context_lines = []
+        if ctx.operation:
+            context_lines.append(f"Operation: {ctx.operation}")
         if log_label and log_content:
-            context_message += f"**{log_label}:** See attached `{log_label.replace(' ', '_').lower()}.txt`\n"
+            context_lines.append(f"Diagnostic: attached {log_label.replace(' ', '_').lower()}.txt")
         if ctx.url:
-            context_message += f"**URL:** `{ctx.url}`\n"
+            context_lines.append(f"URL: {ctx.url}")
         if ctx.title:
-            context_message += f"**Title:** `{ctx.title}`\n"
+            context_lines.append(f"Title: {ctx.title}")
         for key, value in ctx.extra.items():
-            context_message += f"**{key}:** `{value}`\n"
+            context_lines.append(f"{key}: {value}")
+        context_message = "\n".join(context_lines)
 
         # Local log
-        logging.error(f"An error occurred ({error_type}):\n{computer_info}\n{context_message.replace('**', '').replace('`', '')}{message}")
+        logging.error(
+            "[%s] An error occurred (%s):\n%s\n%s%s",
+            error_id,
+            error_type,
+            computer_info,
+            f"{context_message}\n" if context_message else "",
+            message,
+        )
         if log_content:
-            logging.error(f"--- Full {log_label} Log ---\n{log_content}")
+            logging.error("[%s] --- Full %s ---\n%s", error_id, log_label, log_content)
 
         # Discord Notification
         should_report_discord = True
@@ -249,18 +307,20 @@ class Logger:
 
         if should_report_discord and Config.DISCORD_WEBHOOK and "YOUR_DISCORD_WEBHOOK_URL" not in Config.DISCORD_WEBHOOK:
             try:
-                final_report = f"🚨 **YTDL Error Report:**\n{computer_info}\n**Error Type:** `{error_type}`\n{context_message}**Error:**\n```\n{message}\n```"
-                discord_payload = {"content": final_report}
-
-                if log_content:
-                    log_filename = f"{log_label.replace(' ', '_').lower()}.txt"
-                    log_stream = io.BytesIO(log_content.encode('utf-8'))
-                    files = {"file": (log_filename, log_stream, "text/plain")}
-                    requests.post(Config.DISCORD_WEBHOOK, data={"payload_json": json.dumps(discord_payload)}, files=files, timeout=10)
-                else:
-                    requests.post(Config.DISCORD_WEBHOOK, json=discord_payload, timeout=10)
+                final_report = (
+                    f"🚨 **YTDL Error Report** `{error_id}`\n"
+                    f"**Type:** `{error_type}`\n"
+                    f"**Environment:** {computer_info}\n"
+                    f"**Error:**\n```\n{message}\n```\n"
+                    f"{context_message}"
+                )
+                Logger._send_discord_report(
+                    {"content": Logger._truncate_for_discord(final_report)}, log_content, log_label
+                )
             except Exception as e:
-                logging.critical(f"Failed to send error report to Discord: {e}")
+                logging.critical("[%s] Failed to send error report to Discord: %s", error_id, e)
+
+        return error_id
 
 class SubprocessRunner:
     @staticmethod
@@ -306,7 +366,7 @@ class SubprocessRunner:
                         # yt-dlp/FFmpeg look frozen in a postprocessor.
                         try:
                             print(line.strip(), file=output_file)
-                        except (AttributeError, OSError, ValueError):
+                        except (AttributeError, OSError, ValueError, UnicodeEncodeError):
                             logging.debug("Subprocess console stream is unavailable; continuing to drain output.")
                 stream.close()
 
@@ -350,11 +410,11 @@ class SubprocessRunner:
         except FileNotFoundError:
             error_msg = f"Executable not found: {args[0] if args else 'N/A'}. Ensure it is installed and in PATH."
             Logger.report_error(error_msg, ctx=ErrorContext(
-                exception=SubprocessError(error_msg), extra=context))
+                operation="Run external downloader", exception=SubprocessError(error_msg), extra=context))
             return -1, error_msg
         except Exception as e:
             Logger.report_error(f"An unexpected error occurred during subprocess execution.", ctx=ErrorContext(
-                traceback_str=traceback.format_exc(), exception=SubprocessError(str(e)), extra=context))
+                operation="Run external downloader", traceback_str=traceback.format_exc(), exception=SubprocessError(str(e)), extra=context))
             return -1, traceback.format_exc()
 
     @staticmethod
@@ -563,15 +623,16 @@ class YTDLManager:
 
             extracted_error = f"{exception_to_report.reason_title_zh_tw}\n詳細錯誤: {SubprocessRunner.extract_yt_dlp_error(full_log)}"
 
-            Logger.report_error(error_msg, ctx=ErrorContext(
-                url=url, log_output=f"```\n{full_log}\n```", exception=exception_to_report))
-            return False, extracted_error
+            error_id = Logger.report_error(error_msg, ctx=ErrorContext(
+                operation="Fetch metadata", url=url, log_output=f"```\n{full_log}\n```",
+                exception=exception_to_report, extra={"Exit code": str(returncode)}))
+            return False, f"{extracted_error}\n錯誤代碼: {error_id}"
 
         except Exception as e:
             err_obj = DownloadError(str(e))
-            Logger.report_error(f"Error fetching metadata.", ctx=ErrorContext(
-                url=url, traceback_str=traceback.format_exc(), exception=err_obj))
-            return False, f"{err_obj.reason_title_zh_tw}\n詳細錯誤: {str(e)}"
+            error_id = Logger.report_error(f"Error fetching metadata.", ctx=ErrorContext(
+                operation="Fetch metadata", url=url, traceback_str=traceback.format_exc(), exception=err_obj))
+            return False, f"{err_obj.reason_title_zh_tw}\n詳細錯誤: {str(e)}\n錯誤代碼: {error_id}"
 
     @staticmethod
     def load_videos() -> List[Video]:
@@ -608,17 +669,18 @@ class YTDLManager:
 
             extracted_error = f"{exception_to_report.reason_title_zh_tw}\n詳細錯誤: {SubprocessRunner.extract_yt_dlp_error(full_log)}"
 
-            Logger.report_error(error_message, ctx=ErrorContext(
-                url=video.webpage_url, title=video.title,
-                log_output=f"```\n{full_log}\n```", exception=exception_to_report))
-            return False, extracted_error
+            error_id = Logger.report_error(error_message, ctx=ErrorContext(
+                operation="Download video", url=video.webpage_url, title=video.title,
+                log_output=f"```\n{full_log}\n```", exception=exception_to_report,
+                extra={"Exit code": str(returncode)}))
+            return False, f"{extracted_error}\n錯誤代碼: {error_id}"
 
         except Exception as e:
             err_obj = DownloadError(str(e))
-            Logger.report_error(f"Unexpected error during download.", ctx=ErrorContext(
-                url=video.webpage_url, title=video.title,
+            error_id = Logger.report_error(f"Unexpected error during download.", ctx=ErrorContext(
+                operation="Download video", url=video.webpage_url, title=video.title,
                 traceback_str=traceback.format_exc(), exception=err_obj))
-            return False, f"{err_obj.reason_title_zh_tw}\n詳細錯誤: {str(e)}"
+            return False, f"{err_obj.reason_title_zh_tw}\n詳細錯誤: {str(e)}\n錯誤代碼: {error_id}"
 
     @staticmethod
     def cleanup_meta():
