@@ -153,13 +153,35 @@ class Config:
 
     @classmethod
     def pot_provider_status(cls) -> Tuple[bool, str]:
-        """Check local provider integrity without contacting YouTube or Deno."""
+        """Check local provider integrity without contacting YouTube or minting a token."""
         paths = cls.get_pot_provider_paths()
         for name in ("deno", "plugin", "script"):
             if not os.path.isfile(paths[name]):
                 return False, f"Missing PO provider {name}: {paths[name]}"
         if not os.path.isdir(paths["node_modules"]):
             return False, f"Missing PO provider dependencies: {paths['node_modules']}"
+        try:
+            deno_result = subprocess.run(
+                [paths["deno"], "--version"],
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+            deno_match = re.search(r"^deno\s+(\S+)", deno_result.stdout, re.MULTILINE)
+            if deno_result.returncode != 0 or not deno_match:
+                return False, "Unable to read portable Deno version"
+            if deno_match.group(1) != cls.DENO_VERSION:
+                return False, (
+                    "Portable Deno version mismatch: "
+                    f"expected {cls.DENO_VERSION}, got {deno_match.group(1)}"
+                )
+        except (OSError, subprocess.SubprocessError) as e:
+            return False, f"Unable to run portable Deno: {e}"
         try:
             with open(paths["marker"], "r", encoding="utf-8") as f:
                 marker = json.load(f)
@@ -828,13 +850,13 @@ class YTDLManager:
 
     @staticmethod
     def ensure_pot_provider():
-        """Install the portable provider only when its local integrity check fails."""
+        """Repair the portable provider only when its local integrity check fails."""
         ready, reason = Config.pot_provider_status()
         if ready:
             logging.info("YouTube PO Token provider is ready.")
             return True
 
-        logging.info("YouTube PO Token provider needs setup: %s", reason)
+        logging.info("YouTube PO Token provider needs repair: %s", reason)
         updater_path = os.path.join(Config._APP_DIR, "self_update.py")
         downloaded_updater = False
         try:
@@ -859,12 +881,12 @@ class YTDLManager:
             )
             output = result.stdout.strip()
             if output:
-                logging.info("PO provider setup output:\n%s", output[-8000:])
+                logging.info("PO provider repair output:\n%s", output[-8000:])
             if result.returncode != 0:
-                logging.error("PO provider setup exited with code %s.", result.returncode)
+                logging.error("PO provider repair exited with code %s.", result.returncode)
                 return False
         except Exception:
-            logging.error("Unable to set up YouTube PO Token provider.\n%s", traceback.format_exc())
+            logging.error("Unable to repair YouTube PO Token provider.\n%s", traceback.format_exc())
             return False
         finally:
             if downloaded_updater:
@@ -875,10 +897,8 @@ class YTDLManager:
 
         ready, reason = Config.pot_provider_status()
         if not ready:
-            logging.error("PO provider setup completed but is not ready: %s", reason)
+            logging.error("PO provider repair completed but is not ready: %s", reason)
         return ready
-
-
 
 def main():
     Logger.setup()

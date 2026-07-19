@@ -293,8 +293,22 @@ def _extract_source_archive(archive_bytes: bytes, destination: str):
                 shutil.copyfileobj(source, target)
 
 
+def _pot_provider_is_current(provider_dir: str, plugin_path: str, marker_filename: str, version: str) -> bool:
+    """Return whether the installed provider matches the configured release."""
+    marker_path = os.path.join(provider_dir, marker_filename)
+    script_path = os.path.join(provider_dir, "server", "src", "generate_once.ts")
+    node_modules = os.path.join(provider_dir, "server", "node_modules")
+    if not (os.path.isfile(plugin_path) and os.path.isfile(script_path) and os.path.isdir(node_modules)):
+        return False
+    try:
+        with open(marker_path, "r", encoding="utf-8") as marker:
+            return json.load(marker).get("version") == version
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def update_pot_provider(YTDL_module, webhook_url: str, deno_path: str) -> bool:
-    """Install the pinned BgUtils plugin and Deno script source atomically."""
+    """Update BgUtils only when its configured release is missing or outdated."""
     version = _config_value(YTDL_module, "BGUTIL_POT_PROVIDER_VERSION")
     plugin_filename = _config_value(YTDL_module, "BGUTIL_POT_PLUGIN_FILENAME")
     provider_dirname = _config_value(YTDL_module, "BGUTIL_POT_PROVIDER_DIRNAME")
@@ -307,6 +321,10 @@ def update_pot_provider(YTDL_module, webhook_url: str, deno_path: str) -> bool:
     plugin_dir = os.path.join(target_dir, "yt-dlp-plugins")
     plugin_path = os.path.join(plugin_dir, plugin_filename)
     provider_dir = os.path.join(target_dir, provider_dirname)
+    if _pot_provider_is_current(provider_dir, plugin_path, marker_filename, version):
+        print(f"BgUtils PO provider is up to date ({version}).")
+        return True
+
     stage_dir = tempfile.mkdtemp(prefix=".ytdl-bgutil-", dir=target_dir)
     backup_dir = None
     provider_replaced = False

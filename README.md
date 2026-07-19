@@ -35,17 +35,15 @@
 
 ## 啟動與 YouTube PO Token 流程
 
-程式每次啟動會依序進行下列動作：
+程式每次啟動會先檢查程式本體與 `yt-dlp` 更新，然後只做一次本機 provider 完整性檢查：plugin ZIP、Deno script、`node_modules`、版本標記與 portable Deno 是否存在。這個檢查不會向 YouTube 發出測試請求，也不會產生 PO Token。
 
-1. 檢查程式本體與 `yt-dlp` 更新。
-2. 檢查本機的 YouTube Proof of Origin (PO) Token provider 是否完整；這只檢查檔案、版本標記與依賴目錄，**不會**向 YouTube 發出測試請求，也不會產生 PO Token。
-3. 僅在首次使用、檔案缺失或 provider 版本不符時，自動下載並初始化可攜式依賴：
+首次使用、provider 版本不符或檔案不完整時，程式會呼叫 `self_update.py --ensure-pot-provider` 修復依賴。一般程式版本更新時，provider 也會和 FFmpeg 一起由 `self_update.py` 檢查；provider 版本仍由 `Config.BGUTIL_POT_PROVIDER_VERSION` 手動維護。只有需要修復或版本不符時，才會下載並初始化：
+
    - `yt-dlp.exe` 同層的 `deno.exe`
    - `yt-dlp-plugins\bgutil-ytdlp-pot-provider.zip`
    - `bgutil-ytdlp-pot-provider\server\` 與其 Deno 依賴
-4. 初始化完成後，才進入原有的下載介面。後續啟動只做本機完整性檢查，不會重新下載或執行 Deno 初始化。
 
-PO Token 在實際下載 YouTube 影片時才會由 yt-dlp 透過 BgUtils script provider 產生；程式會傳入 `mweb` client、portable Deno 路徑與 provider 的 `server_home`。這個模式不使用 Docker、PowerShell 啟動腳本或常駐 HTTP server。首次初始化需要網路，可能比平常啟動多花一些時間。
+PO Token 在實際下載 YouTube 影片時才會由 yt-dlp 透過 BgUtils script provider 產生；程式會傳入 `mweb` client、portable Deno 路徑與 provider 的 `server_home`。這個模式不使用 Docker、PowerShell 啟動腳本或常駐 HTTP server。provider 修復失敗時，下載會保留 yt-dlp 原有行為，並在日誌中記錄警告。
 
 ## 如何使用
 
@@ -93,7 +91,7 @@ PO Token 在實際下載 YouTube 影片時才會由 yt-dlp 透過 BgUtils script
 |------|------|
 | `YTDL.py` | 核心模組 — 命令列模式入口，包含下載邏輯、組態、錯誤處理及自動更新 |
 | `YTDL_mul.py` | 圖形介面模式入口，匯入 `YTDL.py` 作為模組使用 |
-| `self_update.py` | 更新腳本 — 負責更新程式檔案及可攜式依賴 (yt-dlp、FFmpeg、Deno、BgUtils PO Token provider)；provider 缺失時也會以僅更新依賴模式執行 |
+| `self_update.py` | 更新腳本 — 負責更新程式檔案及可攜式依賴 (yt-dlp、FFmpeg、Deno、BgUtils PO Token provider) |
 
 ## 開發者指南
 
