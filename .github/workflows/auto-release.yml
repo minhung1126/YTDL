@@ -11,7 +11,7 @@ on:
 jobs:
   auto-release:
     name: "Auto Release"
-    runs-on: "windows-latest"
+    runs-on: "ubuntu-latest"
 
     permissions:
       contents: write
@@ -20,73 +20,21 @@ jobs:
       - name: "Checkout code"
         uses: actions/checkout@v4
 
-      - name: "Set up Python"
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: "Install dependencies"
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests pyinstaller
-
       - name: "Extract version info"
         id: version_extractor
         shell: bash
         run: |
           VERSION=$(grep '^__version__' YTDL.py | cut -d '"' -f 2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
-          # Extract DENO_VERSION
-          DENO_VERSION=$(grep 'DENO_VERSION =' YTDL.py | cut -d '"' -f 2)
-          echo "deno_version=$DENO_VERSION" >> $GITHUB_OUTPUT
-
-      - name: "Build EXE"
-        if: steps.version_extractor.outputs.version != 'dev'
-        run: pyinstaller --onefile --clean --name YTDL YTDL.py
-
-      - name: "Download Runtime Dependencies"
-        if: steps.version_extractor.outputs.version != 'dev'
-        shell: pwsh
-        run: |
-          # yt-dlp
-          Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "yt-dlp.exe"
-          
-          # ffmpeg (from yt-dlp/FFmpeg-Builds, same source as self_update.py)
-          Invoke-WebRequest -Uri "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
-          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp"
-          Get-ChildItem -Path "ffmpeg_temp\*\bin\ffmpeg.exe"  | ForEach-Object { Copy-Item $_.FullName -Destination "yt-dlp-ffmpeg.exe" }
-          Get-ChildItem -Path "ffmpeg_temp\*\bin\ffprobe.exe" | ForEach-Object { Copy-Item $_.FullName -Destination "yt-dlp-ffprobe.exe" }
-          
-          # Deno
-          $denoVer = "${{ steps.version_extractor.outputs.deno_version }}"
-          $denoUrl = "https://github.com/denoland/deno/releases/download/v$denoVer/deno-x86_64-pc-windows-msvc.zip"
-          Invoke-WebRequest -Uri $denoUrl -OutFile "deno.zip"
-          Expand-Archive -Path "deno.zip" -DestinationPath "deno_temp"
-          Get-ChildItem -Path "deno_temp" -Filter "deno.exe" -Recurse | Move-Item -Destination .
-
-      - name: "Package Windows Bundle"
-        if: steps.version_extractor.outputs.version != 'dev'
-        shell: pwsh
-        run: |
-          $ver = "${{ steps.version_extractor.outputs.version }}"
-          $zipName = "YTDL.${ver}.Windows.zip"
-          Compress-Archive -Path "dist\YTDL.exe", "yt-dlp.exe", "yt-dlp-ffmpeg.exe", "yt-dlp-ffprobe.exe", "deno.exe" -DestinationPath $zipName
-
       - name: "Package Source Code"
         if: steps.version_extractor.outputs.version != 'dev'
-        shell: pwsh
         run: |
-          $ver = "${{ steps.version_extractor.outputs.version }}"
-          Compress-Archive -Path "YTDL.py", "YTDL_mul.py" -DestinationPath "YTDL.${ver}.zip"
+          zip "YTDL.${{ steps.version_extractor.outputs.version }}.zip" YTDL.py YTDL_mul.py
 
       - name: "Prepare release notes"
         if: steps.version_extractor.outputs.version != 'dev'
-        shell: pwsh
         run: |
-          $ver = "${{ steps.version_extractor.outputs.version }}"
-          $msg = "點開``Assets``並下載``YTDL.$ver.Windows.zip`` (含執行檔與環境) 或 ``YTDL.$ver.zip`` (原始碼)。"
-          $msg | Out-File -FilePath release_notes.md -Encoding utf8
+          echo '點開 `Assets` 並下載 `YTDL.${{ steps.version_extractor.outputs.version }}.zip`（原始碼）。' > release_notes.md
 
       - name: "Create Release"
         if: steps.version_extractor.outputs.version != 'dev'
@@ -96,7 +44,6 @@ jobs:
         run: |
           gh release create ${{ steps.version_extractor.outputs.version }} \
             "YTDL.${{ steps.version_extractor.outputs.version }}.zip" \
-            "YTDL.${{ steps.version_extractor.outputs.version }}.Windows.zip" \
             --title "Release ${{ steps.version_extractor.outputs.version }}" \
             --notes-file "release_notes.md" \
             --generate-notes

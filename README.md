@@ -18,7 +18,6 @@
 
 1. 前往本專案的 [**Releases**](https://github.com/minhung1126/YTDL/releases) 頁面。
 2. 在最新版本的 "Assets" 區塊中下載您需要的版本：
-    - `YTDL.<版本號>.Windows.zip` — 含執行檔與完整執行環境 (yt-dlp、FFmpeg、FFprobe、Deno)，解壓縮即可使用。
     - `YTDL.<版本號>.zip` — 原始碼 (`YTDL.py` + `YTDL_mul.py`)，需自行安裝 Python 與相依套件。
 
 ## 事前準備 (原始碼版)
