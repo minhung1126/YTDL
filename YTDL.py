@@ -261,7 +261,7 @@ class Config:
         return [
             "--js-runtimes", f"deno:{paths['deno']}",
             "--extractor-args",
-            f"youtube:player_client=mweb;youtubepot-bgutilscript:server_home={paths['server_home']}",
+            f"youtubepot-bgutilscript:server_home={paths['server_home']}",
         ]
 
 class YTDLError(Exception):
