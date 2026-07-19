@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.07.19.01"
+__version__ = "v2026.07.20.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -65,6 +65,13 @@ class Config:
     
     # Deno Versioning
     DENO_VERSION = "2.5.4"
+
+    # YouTube Proof of Origin (PO) Token provider. Keep this pinned so the
+    # provider plugin and its JavaScript source are always installed together.
+    BGUTIL_POT_PROVIDER_VERSION = "1.3.1"
+    BGUTIL_POT_PLUGIN_FILENAME = "bgutil-ytdlp-pot-provider.zip"
+    BGUTIL_POT_PROVIDER_DIRNAME = "bgutil-ytdlp-pot-provider"
+    BGUTIL_POT_MARKER_FILENAME = ".ytdl-bgutil-pot-provider.json"
 
     # FFmpeg Configuration
     FFMPEG_VERSION_TAG = "20260712"
@@ -120,6 +127,64 @@ class Config:
         parsed = urlparse(url)
         return '/playlist' in parsed.path or '/channel/' in parsed.path or '/c/' in parsed.path or parsed.path.startswith('/@')
 
+    @classmethod
+    def get_yt_dlp_dir(cls) -> str:
+        """Return the directory that owns the portable yt-dlp dependencies."""
+        yt_dlp_path = shutil.which(cls.EXECUTABLE)
+        if yt_dlp_path:
+            return os.path.dirname(os.path.abspath(yt_dlp_path))
+        return cls._APP_DIR
+
+    @classmethod
+    def get_pot_provider_paths(cls) -> Dict[str, str]:
+        """Return every portable path used by the BgUtils script provider."""
+        target_dir = cls.get_yt_dlp_dir()
+        provider_dir = os.path.join(target_dir, cls.BGUTIL_POT_PROVIDER_DIRNAME)
+        return {
+            "target_dir": target_dir,
+            "deno": os.path.join(target_dir, "deno.exe"),
+            "plugin": os.path.join(target_dir, "yt-dlp-plugins", cls.BGUTIL_POT_PLUGIN_FILENAME),
+            "provider_dir": provider_dir,
+            "server_home": os.path.join(provider_dir, "server"),
+            "script": os.path.join(provider_dir, "server", "src", "generate_once.ts"),
+            "node_modules": os.path.join(provider_dir, "server", "node_modules"),
+            "marker": os.path.join(provider_dir, cls.BGUTIL_POT_MARKER_FILENAME),
+        }
+
+    @classmethod
+    def pot_provider_status(cls) -> Tuple[bool, str]:
+        """Check local provider integrity without contacting YouTube or Deno."""
+        paths = cls.get_pot_provider_paths()
+        for name in ("deno", "plugin", "script"):
+            if not os.path.isfile(paths[name]):
+                return False, f"Missing PO provider {name}: {paths[name]}"
+        if not os.path.isdir(paths["node_modules"]):
+            return False, f"Missing PO provider dependencies: {paths['node_modules']}"
+        try:
+            with open(paths["marker"], "r", encoding="utf-8") as f:
+                marker = json.load(f)
+        except (OSError, ValueError, TypeError) as e:
+            return False, f"Cannot read PO provider marker: {e}"
+        if marker.get("version") != cls.BGUTIL_POT_PROVIDER_VERSION:
+            return False, (
+                "PO provider version mismatch: "
+                f"expected {cls.BGUTIL_POT_PROVIDER_VERSION}, got {marker.get('version')!r}"
+            )
+        return True, "ready"
+
+    @classmethod
+    def get_youtube_pot_args(cls) -> List[str]:
+        """Return script-provider arguments only when the local provider is ready."""
+        ready, _ = cls.pot_provider_status()
+        if not ready:
+            return []
+        paths = cls.get_pot_provider_paths()
+        return [
+            "--js-runtimes", f"deno:{paths['deno']}",
+            "--extractor-args",
+            f"youtube:player_client=mweb;youtubepot-bgutilscript:server_home={paths['server_home']}",
+        ]
+
 class YTDLError(Exception):
     """Base class for YTDL exceptions."""
     report = True
@@ -148,6 +213,10 @@ class PremiumRequiredError(DownloadError):
     """Raised when video requires membership."""
     report = False
     reason_title_zh_tw = "此為會員專屬影片，無法下載"
+
+class PoTokenProviderError(DownloadError):
+    """Raised when yt-dlp cannot generate a YouTube PO Token."""
+    reason_title_zh_tw = "YouTube PO Token 產生失敗"
 
 class MetadataError(YTDLError):
     """Raised when metadata file operations fail."""
@@ -491,6 +560,15 @@ class Video:
         if Config.FFMPEG_BINARY:
             args.extend(['--ffmpeg-location', Config.FFMPEG_BINARY])
 
+        source_url = self.webpage_url or self.playlist_url
+        if Config.is_youtube_url(source_url):
+            pot_args = Config.get_youtube_pot_args()
+            if pot_args:
+                args.extend(pot_args)
+            else:
+                ready, reason = Config.pot_provider_status()
+                logging.warning("YouTube PO Token provider is unavailable; downloading without it: %s", reason)
+
         if not (self.playlist_url and self.playlist_index is not None):
             args.extend(self._get_preserved_metadata_args())
 
@@ -575,6 +653,17 @@ class YTDLManager:
     def _detect_specific_error(log_text: str) -> Optional[YTDLError]:
         if not log_text:
             return None
+
+        pot_error_markers = (
+            "PoTokenProviderError",
+            "Unexpected error when fetching PO Token",
+            "_get_pot_via_script failed",
+            "Unable to run script",
+            "The script did not respond with a po_token",
+            "Failed to check script version",
+        )
+        if any(marker.lower() in log_text.lower() for marker in pot_error_markers):
+            return PoTokenProviderError("yt-dlp could not generate a YouTube PO Token.")
         
         if "Private video" in log_text:
             return PrivateVideoError("Video is private.")
@@ -737,6 +826,58 @@ class YTDLManager:
         except Exception as e:
              logging.error(f"Failed to check/update yt-dlp: {e}")
 
+    @staticmethod
+    def ensure_pot_provider():
+        """Install the portable provider only when its local integrity check fails."""
+        ready, reason = Config.pot_provider_status()
+        if ready:
+            logging.info("YouTube PO Token provider is ready.")
+            return True
+
+        logging.info("YouTube PO Token provider needs setup: %s", reason)
+        updater_path = os.path.join(Config._APP_DIR, "self_update.py")
+        downloaded_updater = False
+        try:
+            if not os.path.isfile(updater_path):
+                repo = "minhung1126/YTDL"
+                updater_url = f"https://raw.githubusercontent.com/{repo}/main/self_update.py"
+                response = _http_get_with_retry(updater_url, timeout=15)
+                with open(updater_path, "wb") as f:
+                    f.write(response.content)
+                downloaded_updater = True
+
+            result = subprocess.run(
+                [sys.executable, updater_path, "--ensure-pot-provider", Config.DISCORD_WEBHOOK],
+                cwd=Config._APP_DIR,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=900,
+            )
+            output = result.stdout.strip()
+            if output:
+                logging.info("PO provider setup output:\n%s", output[-8000:])
+            if result.returncode != 0:
+                logging.error("PO provider setup exited with code %s.", result.returncode)
+                return False
+        except Exception:
+            logging.error("Unable to set up YouTube PO Token provider.\n%s", traceback.format_exc())
+            return False
+        finally:
+            if downloaded_updater:
+                try:
+                    os.remove(updater_path)
+                except OSError:
+                    logging.warning("Unable to remove temporary updater: %s", updater_path)
+
+        ready, reason = Config.pot_provider_status()
+        if not ready:
+            logging.error("PO provider setup completed but is not ready: %s", reason)
+        return ready
+
 
 
 def main():
@@ -744,6 +885,7 @@ def main():
     try:
         YTDLManager.update_self()
         YTDLManager.update_yt_dlp() # Ensure yt-dlp is always latest nightly
+        YTDLManager.ensure_pot_provider()
         while True:
             # Simple CLI Interaction
             if os.path.isdir(Config.META_DIR) and os.listdir(Config.META_DIR):

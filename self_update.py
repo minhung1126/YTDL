@@ -9,9 +9,11 @@ import subprocess
 import traceback
 import platform
 import shutil
+import tempfile
 from datetime import datetime, timezone
 from uuid import uuid4
 from zipfile import ZipFile
+from typing import Optional
 
 MAX_DIAGNOSTIC_BYTES = 8 * 1024 * 1024
 
@@ -186,65 +188,214 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
     except Exception as e:
         report_error_updater(f"FFmpeg update failed: {e}\n{traceback.format_exc()}", webhook_url)
 
-def update_binary(YTDL_module, webhook_url: str):
-    """Updates binary dependencies like deno and FFmpeg based on versions in the YTDL module."""
+def _config_value(YTDL_module, name, default=None):
+    config = getattr(YTDL_module, "Config", YTDL_module)
+    return getattr(config, name, default)
 
-    # --- Deno Update ---
+
+def _portable_target_dir(YTDL_module) -> str:
+    executable = _config_value(YTDL_module, "EXECUTABLE", "yt-dlp")
+    yt_dlp_path = shutil.which(executable)
+    if yt_dlp_path:
+        return os.path.dirname(os.path.abspath(yt_dlp_path))
+    return os.getcwd()
+
+
+def _installed_deno_version(deno_path: str) -> Optional[str]:
+    if not os.path.isfile(deno_path):
+        return None
     try:
-        if hasattr(YTDL_module, 'Config'):
-            deno_version = getattr(YTDL_module.Config, 'DENO_VERSION', None)
-        else:
-            deno_version = getattr(YTDL_module, 'DENO_VERSION', None)
+        result = subprocess.run(
+            [deno_path, "--version"],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"^deno\s+(\S+)", result.stdout, re.MULTILINE)
+    return match.group(1) if result.returncode == 0 and match else None
 
-        if deno_version:
-            print(f"Attempting to update deno to version {deno_version}...")
-            subprocess.run(['deno', 'upgrade', '--version', deno_version], check=True)
-            print("Deno update successful.")
-    except AttributeError:
-        print("DENO_VERSION not found in YTDL.py. Skipping Deno update.")
-    except subprocess.CalledProcessError as e:
-        report_error_updater(f"Deno upgrade failed: {e}", webhook_url)
-    except FileNotFoundError:
-        print("`deno` command not found. Attempting to download it...")
-        try:
-            # At this point, deno_version should be defined from the outer try block
-            if not deno_version:
-                report_error_updater("Deno version is not specified in YTDL.py, cannot download.", webhook_url)
-                return
 
-            yt_dlp_path = shutil.which('yt-dlp')
-            if not yt_dlp_path:
-                report_error_updater("`yt-dlp` executable not found in PATH. Cannot determine installation directory for Deno.", webhook_url)
-                return
+def ensure_portable_deno(YTDL_module, webhook_url: str) -> Optional[str]:
+    """Install the pinned Deno executable next to yt-dlp without touching PATH."""
+    deno_version = _config_value(YTDL_module, "DENO_VERSION")
+    if not deno_version:
+        report_error_updater("DENO_VERSION not found in YTDL.py.", webhook_url, "Deno update")
+        return None
+    if platform.system() != "Windows":
+        report_error_updater(
+            f"Portable Deno auto-installation is only supported on Windows. Your OS: {platform.system()}",
+            webhook_url,
+            "Deno update",
+        )
+        return None
 
-            target_dir = os.path.dirname(yt_dlp_path)
-            print(f"Deno will be installed in the same directory as yt-dlp: {target_dir}")
+    target_dir = _portable_target_dir(YTDL_module)
+    deno_path = os.path.join(target_dir, "deno.exe")
+    if _installed_deno_version(deno_path) == deno_version:
+        print(f"Portable Deno is up to date ({deno_version}).")
+        return deno_path
 
-            if platform.system() != "Windows":
-                report_error_updater(f"Deno auto-installation is only supported on Windows. Your OS: {platform.system()}", webhook_url)
-                return
-
-            deno_zip_url = f"https://github.com/denoland/deno/releases/download/v{deno_version}/deno-x86_64-pc-windows-msvc.zip"
-            print(f"Downloading Deno for Windows from {deno_zip_url}...")
-
-            resp = _http_get_with_retry(deno_zip_url, timeout=(10, 60))
-
-            with ZipFile(io.BytesIO(resp.content)) as z:
-                print("Extracting deno.exe...")
-                z.extract('deno.exe', path=target_dir)
-            
-            deno_exe_path = os.path.join(target_dir, 'deno.exe')
-            if os.path.exists(deno_exe_path):
-                print(f"Deno successfully installed at {deno_exe_path}")
-            else:
-                raise FileNotFoundError("deno.exe not found after extraction.")
-
-        except Exception as install_e:
-            report_error_updater(f"Failed to download and install Deno.\n{install_e}\n{traceback.format_exc()}", webhook_url)
+    stage_dir = tempfile.mkdtemp(prefix=".ytdl-deno-", dir=target_dir)
+    try:
+        deno_zip_url = (
+            "https://github.com/denoland/deno/releases/download/"
+            f"v{deno_version}/deno-x86_64-pc-windows-msvc.zip"
+        )
+        print(f"Downloading portable Deno {deno_version}...")
+        response = _http_get_with_retry(deno_zip_url, timeout=(10, 120))
+        stage_deno = os.path.join(stage_dir, "deno.exe")
+        with ZipFile(io.BytesIO(response.content)) as archive:
+            with archive.open("deno.exe") as source, open(stage_deno, "wb") as destination:
+                shutil.copyfileobj(source, destination)
+        if _installed_deno_version(stage_deno) != deno_version:
+            raise RuntimeError("Downloaded deno.exe did not report the requested version.")
+        os.replace(stage_deno, deno_path)
+        print(f"Portable Deno installed at {deno_path}")
+        return deno_path
     except Exception:
-        report_error_updater(f"An unexpected error occurred during Deno update.\n{traceback.format_exc()}", webhook_url)
+        report_error_updater(
+            f"Failed to download and install portable Deno.\n{traceback.format_exc()}",
+            webhook_url,
+            "Deno update",
+        )
+        return None
+    finally:
+        shutil.rmtree(stage_dir, ignore_errors=True)
 
-    # --- FFmpeg Update ---
+
+def _extract_source_archive(archive_bytes: bytes, destination: str):
+    """Extract a GitHub source archive while rejecting path traversal and links."""
+    with ZipFile(io.BytesIO(archive_bytes)) as archive:
+        files = [info for info in archive.infolist() if info.filename and not info.is_dir()]
+        roots = {info.filename.split("/", 1)[0] for info in files if "/" in info.filename}
+        if len(roots) != 1:
+            raise ValueError("Provider source archive has an unexpected root layout.")
+        root = roots.pop() + "/"
+        destination_abs = os.path.abspath(destination)
+        for info in files:
+            if not info.filename.startswith(root):
+                raise ValueError(f"Unexpected archive entry: {info.filename}")
+            if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                raise ValueError(f"Provider source archive contains a symbolic link: {info.filename}")
+            relative_path = info.filename[len(root):]
+            target_path = os.path.abspath(os.path.join(destination_abs, *relative_path.split("/")))
+            if os.path.commonpath([destination_abs, target_path]) != destination_abs:
+                raise ValueError(f"Unsafe archive entry: {info.filename}")
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            with archive.open(info) as source, open(target_path, "wb") as target:
+                shutil.copyfileobj(source, target)
+
+
+def update_pot_provider(YTDL_module, webhook_url: str, deno_path: str) -> bool:
+    """Install the pinned BgUtils plugin and Deno script source atomically."""
+    version = _config_value(YTDL_module, "BGUTIL_POT_PROVIDER_VERSION")
+    plugin_filename = _config_value(YTDL_module, "BGUTIL_POT_PLUGIN_FILENAME")
+    provider_dirname = _config_value(YTDL_module, "BGUTIL_POT_PROVIDER_DIRNAME")
+    marker_filename = _config_value(YTDL_module, "BGUTIL_POT_MARKER_FILENAME")
+    if not all((version, plugin_filename, provider_dirname, marker_filename)):
+        report_error_updater("BgUtils PO provider configuration is incomplete.", webhook_url, "PO provider update")
+        return False
+
+    target_dir = _portable_target_dir(YTDL_module)
+    plugin_dir = os.path.join(target_dir, "yt-dlp-plugins")
+    plugin_path = os.path.join(plugin_dir, plugin_filename)
+    provider_dir = os.path.join(target_dir, provider_dirname)
+    stage_dir = tempfile.mkdtemp(prefix=".ytdl-bgutil-", dir=target_dir)
+    backup_dir = None
+    provider_replaced = False
+    try:
+        os.makedirs(plugin_dir, exist_ok=True)
+        plugin_url = (
+            "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/download/"
+            f"{version}/{plugin_filename}"
+        )
+        source_url = (
+            "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/"
+            f"{version}.zip"
+        )
+        print(f"Downloading BgUtils PO provider {version}...")
+        plugin_response = _http_get_with_retry(plugin_url, timeout=(10, 120))
+        source_response = _http_get_with_retry(source_url, timeout=(10, 120))
+
+        with ZipFile(io.BytesIO(plugin_response.content)) as plugin_archive:
+            if not any(name.startswith("yt_dlp_plugins/") for name in plugin_archive.namelist()):
+                raise ValueError("Provider plugin archive does not contain yt_dlp_plugins.")
+
+        stage_plugin = os.path.join(stage_dir, plugin_filename)
+        with open(stage_plugin, "wb") as f:
+            f.write(plugin_response.content)
+
+        stage_provider = os.path.join(stage_dir, provider_dirname)
+        _extract_source_archive(source_response.content, stage_provider)
+        server_home = os.path.join(stage_provider, "server")
+        script_path = os.path.join(server_home, "src", "generate_once.ts")
+        if not os.path.isfile(script_path):
+            raise FileNotFoundError(f"Provider Deno script is missing: {script_path}")
+
+        print("Initializing BgUtils PO provider with portable Deno...")
+        result = subprocess.run(
+            [deno_path, "install", "--allow-scripts=npm:canvas", "--frozen"],
+            cwd=server_home,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=900,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Deno dependency installation failed:\n{result.stdout[-8000:]}")
+        if not os.path.isdir(os.path.join(server_home, "node_modules")):
+            raise FileNotFoundError("Deno did not create the provider node_modules directory.")
+
+        if os.path.isdir(provider_dir):
+            backup_dir = os.path.join(stage_dir, "previous-provider")
+            os.replace(provider_dir, backup_dir)
+        os.replace(stage_provider, provider_dir)
+        provider_replaced = True
+        os.replace(stage_plugin, plugin_path)
+        marker_path = os.path.join(provider_dir, marker_filename)
+        with open(marker_path, "w", encoding="utf-8") as marker:
+            json.dump({"version": version, "installed_at": datetime.now(timezone.utc).isoformat()}, marker)
+
+        if backup_dir and os.path.isdir(backup_dir):
+            shutil.rmtree(backup_dir, ignore_errors=True)
+        print(f"BgUtils PO provider {version} is ready.")
+        return True
+    except Exception:
+        if provider_replaced and backup_dir and os.path.isdir(backup_dir):
+            try:
+                shutil.rmtree(provider_dir, ignore_errors=True)
+                os.replace(backup_dir, provider_dir)
+            except OSError:
+                pass
+        report_error_updater(
+            f"Failed to install BgUtils PO provider.\n{traceback.format_exc()}",
+            webhook_url,
+            "PO provider update",
+        )
+        return False
+    finally:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+
+
+def ensure_pot_provider(YTDL_module, webhook_url: str) -> bool:
+    deno_path = ensure_portable_deno(YTDL_module, webhook_url)
+    return bool(deno_path and update_pot_provider(YTDL_module, webhook_url, deno_path))
+
+
+def update_binary(YTDL_module, webhook_url: str):
+    """Updates portable Deno, the PO provider, and FFmpeg after an app update."""
+    ensure_pot_provider(YTDL_module, webhook_url)
     update_ffmpeg(YTDL_module, webhook_url)
 
 def program_files_update(webhook_url: str):
@@ -309,6 +460,19 @@ def program_files_update(webhook_url: str):
     return True
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--ensure-pot-provider":
+        webhook_url = sys.argv[2] if len(sys.argv) > 2 else ""
+        try:
+            import YTDL
+        except ImportError:
+            report_error_updater(
+                f"Failed to import YTDL.py for PO provider setup.\n{traceback.format_exc()}",
+                webhook_url,
+                "PO provider update",
+            )
+            sys.exit(1)
+        sys.exit(0 if ensure_pot_provider(YTDL, webhook_url) else 1)
+
     caller_script_path = sys.argv[1] if len(sys.argv) > 1 else None
     webhook_url = sys.argv[2] if len(sys.argv) > 2 else ""
 

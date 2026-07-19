@@ -9,7 +9,7 @@
   - **命令列模式 (`YTDL.py`)**: 適合下載單一影片或整個播放清單/頻道。
   - **圖形介面模式 (`YTDL_mul.py`)**: 自動監控剪貼簿，方便快速批次下載多個影片。
 - **智慧功能**:
-  - **自動更新**: 程式啟動時自動檢查並更新到最新版本 (包含程式本身、yt-dlp、FFmpeg 及 Deno)。
+  - **自動更新**: 程式啟動時自動檢查並更新到最新版本 (包含程式本身、yt-dlp、FFmpeg、portable Deno 與 YouTube PO Token provider)。
   - **依賴自動安裝**: 首次執行時自動安裝所需 Python 套件 (`requests`、`pyperclip`)，開箱即用。
   - **斷點續傳**: 若上次下載中斷，下次啟動時會詢問是否繼續。
 - **錯誤回報**: 內建 Discord Webhook 錯誤回報機制；回報含錯誤代碼、程式／系統版本、失敗網址或標題及診斷檔，便於開發者追查問題。
@@ -32,6 +32,20 @@
 
 3. **安裝 FFmpeg**: 程式會在 `yt-dlp` 所在目錄尋找 `yt-dlp-ffmpeg.exe` 及 `yt-dlp-ffprobe.exe`。自動更新時會從 [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) 下載並放置。
 4. **安裝 Deno** *(可選)*: 若需要 Deno 相關功能，程式會在 `yt-dlp` 所在目錄尋找 `deno.exe`，更新時會自動下載。
+
+## 啟動與 YouTube PO Token 流程
+
+程式每次啟動會依序進行下列動作：
+
+1. 檢查程式本體與 `yt-dlp` 更新。
+2. 檢查本機的 YouTube Proof of Origin (PO) Token provider 是否完整；這只檢查檔案、版本標記與依賴目錄，**不會**向 YouTube 發出測試請求，也不會產生 PO Token。
+3. 僅在首次使用、檔案缺失或 provider 版本不符時，自動下載並初始化可攜式依賴：
+   - `yt-dlp.exe` 同層的 `deno.exe`
+   - `yt-dlp-plugins\bgutil-ytdlp-pot-provider.zip`
+   - `bgutil-ytdlp-pot-provider\server\` 與其 Deno 依賴
+4. 初始化完成後，才進入原有的下載介面。後續啟動只做本機完整性檢查，不會重新下載或執行 Deno 初始化。
+
+PO Token 在實際下載 YouTube 影片時才會由 yt-dlp 透過 BgUtils script provider 產生；程式會傳入 `mweb` client、portable Deno 路徑與 provider 的 `server_home`。這個模式不使用 Docker、PowerShell 啟動腳本或常駐 HTTP server。首次初始化需要網路，可能比平常啟動多花一些時間。
 
 ## 如何使用
 
@@ -79,7 +93,7 @@
 |------|------|
 | `YTDL.py` | 核心模組 — 命令列模式入口，包含下載邏輯、組態、錯誤處理及自動更新 |
 | `YTDL_mul.py` | 圖形介面模式入口，匯入 `YTDL.py` 作為模組使用 |
-| `self_update.py` | 更新腳本 — 由 `YTDL.py` 在偵測到新版時自動下載並執行，負責更新程式檔案及二進位依賴 (yt-dlp、FFmpeg、Deno) |
+| `self_update.py` | 更新腳本 — 負責更新程式檔案及可攜式依賴 (yt-dlp、FFmpeg、Deno、BgUtils PO Token provider)；provider 缺失時也會以僅更新依賴模式執行 |
 
 ## 開發者指南
 
@@ -98,6 +112,7 @@
 | `YT_DLP_VERSION_CHANNEL` | yt-dlp 更新頻道 (目前: `nightly`) |
 | `DENO_VERSION` | Deno 的固定版本號 |
 | `FFMPEG_VERSION_TAG` | FFmpeg 的版本標籤 |
+| `BGUTIL_POT_PROVIDER_VERSION` | BgUtils PO Token provider 的固定版本號 |
 
 `self_update.py` 會讀取這些值並在更新時下載對應版本。
 
