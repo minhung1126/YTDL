@@ -293,21 +293,66 @@ class ClipboardWatcherApp:
             self.master.destroy()
 
 if __name__ == "__main__":
+    root = None
+    startup_window = None
     try:
         # Clear clipboard at startup
         pyperclip.copy('')
 
-        # Keep the GUI startup lifecycle identical to the command-line mode.
-        YTDL.YTDLManager.run_startup_maintenance()
-
+        # Run the shared startup lifecycle synchronously, while showing its
+        # current stage before the main downloader window is available.
         root = tk.Tk()
+        root.withdraw()
+        startup_window = tk.Toplevel(root)
+        startup_window.title("YTDL 準備中")
+        startup_window.resizable(False, False)
+        startup_window.protocol("WM_DELETE_WINDOW", lambda: None)
+        startup_window.transient(root)
+
+        startup_status = tk.StringVar(value="正在準備啟動…")
+        ttk.Label(
+            startup_window,
+            text="YouTube 下載器正在準備執行環境",
+            padding=(24, 20, 24, 8),
+        ).pack()
+        ttk.Label(
+            startup_window,
+            textvariable=startup_status,
+            wraplength=360,
+            justify=tk.CENTER,
+            padding=(24, 0, 24, 20),
+        ).pack()
+        startup_window.update_idletasks()
+        startup_window.geometry(
+            f"+{(startup_window.winfo_screenwidth() - startup_window.winfo_width()) // 2}"
+            f"+{(startup_window.winfo_screenheight() - startup_window.winfo_height()) // 2}"
+        )
+
+        def show_startup_progress(message):
+            startup_status.set(message)
+            startup_window.update_idletasks()
+            startup_window.update()
+
+        # Keep the GUI startup lifecycle identical to the command-line mode.
+        YTDL.YTDLManager.run_startup_maintenance(show_startup_progress)
+        show_startup_progress("準備完成，正在開啟主視窗…")
+        startup_window.destroy()
+        startup_window = None
+        root.deiconify()
         app = ClipboardWatcherApp(root)
         root.mainloop()
     except Exception:
         YTDL.Logger.report_error("A critical error occurred on startup.", ctx=YTDL.ErrorContext(traceback_str=traceback.format_exc()))
         try:
-            root = tk.Tk()
+            if startup_window is not None and startup_window.winfo_exists():
+                startup_window.destroy()
+            if root is None:
+                root = tk.Tk()
             root.withdraw()
-            messagebox.showerror(UI_TEXT["msg_fatal_error_title"], UI_TEXT["msg_fatal_error_body"])
+            messagebox.showerror(
+                UI_TEXT["msg_fatal_error_title"],
+                UI_TEXT["msg_fatal_error_body"],
+                parent=root,
+            )
         finally:
             sys.exit(1)

@@ -14,7 +14,7 @@ import io
 import time
 from datetime import datetime, timezone
 from uuid import uuid4
-from typing import Tuple, List, Optional, Dict, Any
+from typing import Tuple, List, Optional, Dict, Any, Callable
 from dataclasses import dataclass, field
 
 sys.dont_write_bytecode = True
@@ -1004,7 +1004,7 @@ class YTDLManager:
         return ready
 
     @staticmethod
-    def run_startup_maintenance() -> Dict[str, bool]:
+    def run_startup_maintenance(progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, bool]:
         """Run the shared update and dependency checks required before downloading.
 
         Both the command-line and GUI entry points must use this method so a
@@ -1013,11 +1013,25 @@ class YTDLManager:
         failures are logged and intentionally do not prevent yt-dlp from
         attempting its normal fallback behaviour.
         """
+        def report_progress(message: str):
+            if progress_callback is None:
+                return
+            try:
+                progress_callback(message)
+            except Exception:
+                logging.warning("Unable to report startup progress.\n%s", traceback.format_exc())
+
+        report_progress("正在檢查程式更新…")
         YTDLManager.update_self()
+        report_progress("正在檢查 yt-dlp nightly 更新…")
         YTDLManager.update_yt_dlp()
+        report_progress("正在檢查或修復 FFmpeg 與 FFprobe…")
+        ffmpeg_ready = YTDLManager.ensure_ffmpeg()
+        report_progress("正在檢查或修復 YouTube PO Token provider…")
+        pot_provider_ready = YTDLManager.ensure_pot_provider()
         return {
-            "ffmpeg": YTDLManager.ensure_ffmpeg(),
-            "pot_provider": YTDLManager.ensure_pot_provider(),
+            "ffmpeg": ffmpeg_ready,
+            "pot_provider": pot_provider_ready,
         }
 
 def main():
