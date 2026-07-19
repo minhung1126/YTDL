@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.07.20.06"
+__version__ = "v2026.07.20.07"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -324,6 +324,21 @@ class Config:
         result = cls._pot_provider_script_probe(paths)
         cls._pot_provider_status_cache = result
         return result
+
+    @classmethod
+    def get_youtube_pot_args(cls) -> Tuple[List[str], str]:
+        """Return the yt-dlp options for the portable YouTube PO-token provider."""
+        ready, reason = cls.pot_provider_status()
+        if not ready:
+            return [], reason
+
+        paths = cls.get_pot_provider_paths()
+        return [
+            "--js-runtimes", f"deno:{paths['deno']}",
+            "--extractor-args", "youtube:player_client=mweb",
+            "--extractor-args",
+            f"youtubepot-bgutilscript:server_home={paths['server_home']}",
+        ], "ready"
 
 class YTDLError(Exception):
     """Base class for YTDL exceptions."""
@@ -693,14 +708,9 @@ class Video:
 
         source_url = self.webpage_url or self.playlist_url
         if Config.is_youtube_url(source_url):
-            pot_provider_ready, reason = Config.pot_provider_status()
-            if pot_provider_ready:
-                paths = Config.get_pot_provider_paths()
-                args.extend([
-                    "--js-runtimes", f"deno:{paths['deno']}",
-                    "--extractor-args",
-                    f"youtubepot-bgutilscript:server_home={paths['server_home']}",
-                ])
+            pot_args, reason = Config.get_youtube_pot_args()
+            if pot_args:
+                args.extend(pot_args)
             else:
                 logging.warning("YouTube PO Token provider is unavailable; downloading without it: %s", reason)
 
@@ -874,6 +884,13 @@ class YTDLManager:
             
             if not Config.is_playlist_or_channel_url(url):
                 args.append('--no-playlist')
+
+            if Config.is_youtube_url(url):
+                pot_args, reason = Config.get_youtube_pot_args()
+                if pot_args:
+                    args.extend(pot_args)
+                else:
+                    logging.warning("YouTube PO Token provider is unavailable; fetching metadata without it: %s", reason)
 
             returncode, full_log = SubprocessRunner.run(args, {"URL": url})
 
