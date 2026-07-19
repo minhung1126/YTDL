@@ -98,9 +98,11 @@ class Config:
     # Paths and Environment
     _APP_DIR = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
     META_DIR = os.path.join(_APP_DIR, 'meta')
+    LOG_FILE = os.path.join(_APP_DIR, 'ytdl.log')
     EXECUTABLE = 'yt-dlp'
     CONCURRENT_FRAGMENTS = "2"  # String: passed directly as CLI args to yt-dlp
     PROGRESS_BAR_SECONDS = "2"  # String: passed directly as CLI args to yt-dlp
+    SUBPROCESS_HEARTBEAT_SECONDS = 60
 
     # Regex
     YOUTUBE_REGEX = r'(?:https?://)?(?:www\.)?(?:m\.)?(?:youtube\.com|youtu\.be)/(?:watch\?v=|embed/|v/|shorts/|playlist\?|channel/|c/|user/|@)?[\w\-?=&%]+'
@@ -179,9 +181,24 @@ class Logger:
         if logger.hasHandlers():
             logger.handlers.clear()
 
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(log_formatter)
-        logger.addHandler(console_handler)
+        # A .py file can be associated with pythonw.exe on Windows. In that
+        # case both standard streams are None, so console logging must be
+        # optional rather than preventing the background download worker from
+        # starting.
+        console_stream = sys.stdout or sys.stderr
+        if console_stream is not None:
+            console_handler = logging.StreamHandler(console_stream)
+            console_handler.setFormatter(log_formatter)
+            logger.addHandler(console_handler)
+
+        # Keep the last subprocess output available when a GUI-launched process
+        # stalls and the console is no longer visible.
+        try:
+            file_handler = logging.FileHandler(Config.LOG_FILE, encoding='utf-8')
+            file_handler.setFormatter(log_formatter)
+            logger.addHandler(file_handler)
+        except OSError as e:
+            logger.warning(f"Unable to create diagnostic log file: {e}")
 
     @staticmethod
     def _get_system_info() -> str:
@@ -250,39 +267,85 @@ class SubprocessRunner:
     def run(args: list, context: dict = None) -> Tuple[int, str]:
         if context is None:
             context = {}
+        process = None
         try:
-            # Using Popen to stream output (removing [debug] lines if needed)
+            # stdin must not be inherited from a GUI/worker process. yt-dlp
+            # launches FFmpeg for post-processing, and FFmpeg may otherwise
+            # wait on an inherited console input handle.
             process = subprocess.Popen(
-                args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+                args,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                bufsize=1,
+            )
+            started_at = time.monotonic()
+            last_output_at = started_at
+            last_output_line = ""
+            output_lock = threading.Lock()
+            logging.info(f"Started subprocess PID {process.pid}: {subprocess.list2cmdline(args)}")
 
             stdout_lines = []
             stderr_lines = []
 
             def stream_reader(stream, line_list, output_file):
+                nonlocal last_output_at, last_output_line
                 for line in iter(stream.readline, ''):
                     line_list.append(line)
-                    if '[debug]' not in line:
-                         # Print to console for user feedback
-                        print(line.strip(), file=output_file)
+                    with output_lock:
+                        last_output_at = time.monotonic()
+                        last_output_line = line.strip()
+                    if '[debug]' not in line and output_file is not None:
+                        # Console output is best-effort. Never let an absent,
+                        # disconnected, or legacy-encoded Windows console stop
+                        # draining this pipe. A UnicodeEncodeError otherwise
+                        # terminates this reader, fills the pipe, and makes
+                        # yt-dlp/FFmpeg look frozen in a postprocessor.
+                        try:
+                            print(line.strip(), file=output_file)
+                        except (AttributeError, OSError, ValueError):
+                            logging.debug("Subprocess console stream is unavailable; continuing to drain output.")
                 stream.close()
 
-            stdout_thread = threading.Thread(target=stream_reader, args=(process.stdout, stdout_lines, sys.stdout))
-            stderr_thread = threading.Thread(target=stream_reader, args=(process.stderr, stderr_lines, sys.stderr))
+            stdout_thread = threading.Thread(target=stream_reader, args=(process.stdout, stdout_lines, sys.stdout), daemon=True)
+            stderr_thread = threading.Thread(target=stream_reader, args=(process.stderr, stderr_lines, sys.stderr), daemon=True)
 
             stdout_thread.start()
             stderr_thread.start()
+            next_heartbeat_at = started_at + Config.SUBPROCESS_HEARTBEAT_SECONDS
+            while process.poll() is None:
+                time.sleep(0.25)
+                now = time.monotonic()
+                if now >= next_heartbeat_at:
+                    with output_lock:
+                        idle_seconds = int(now - last_output_at)
+                        latest_line = last_output_line
+                    logging.warning(
+                        "Subprocess heartbeat: PID %s is still running after %ss; "
+                        "no output for %ss. Last output: %s",
+                        process.pid,
+                        int(now - started_at),
+                        idle_seconds,
+                        latest_line or "(none)",
+                    )
+                    next_heartbeat_at = now + Config.SUBPROCESS_HEARTBEAT_SECONDS
+
             stdout_thread.join()
             stderr_thread.join()
-            process.wait()
 
             full_log = "".join(stdout_lines) + "".join(stderr_lines)
+            logging.info(f"Subprocess PID {process.pid} exited with code {process.returncode} after {int(time.monotonic() - started_at)}s")
             return process.returncode, full_log
         except KeyboardInterrupt:
             logging.warning("Process interrupted by user.")
-            try:
-                process.terminate()
-            except Exception:
-                pass
+            if process is not None:
+                try:
+                    process.terminate()
+                except Exception:
+                    pass
             return -1, "Interrupted by user"
         except FileNotFoundError:
             error_msg = f"Executable not found: {args[0] if args else 'N/A'}. Ensure it is installed and in PATH."
@@ -353,7 +416,10 @@ class Video:
             '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr',
             '--embed-subs', '--sub-langs', 'all,-live_chat',
             '--embed-thumbnail', '--embed-metadata',
-            '--merge-output-format', 'mkv', '--remux-video', 'mkv',
+            # Prevent FFmpeg from blocking on an inherited console handle when
+            # this application is launched as a GUI process on Windows.
+            '--postprocessor-args', 'FFmpeg:-nostdin',
+            '--merge-output-format', 'mkv',
             '--encoding', 'utf-8',
             '--force-ipv4',
             '--concurrent-fragments', Config.CONCURRENT_FRAGMENTS,
