@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.07.20.02"
+__version__ = "v2026.07.20.03"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -164,7 +164,6 @@ class Config:
     # Paths and Environment
     _APP_DIR = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
     META_DIR = os.path.join(_APP_DIR, 'meta')
-    LOG_FILE = os.path.join(_APP_DIR, 'ytdl.log')
     EXECUTABLE = 'yt-dlp'
     CONCURRENT_FRAGMENTS = "2"  # String: passed directly as CLI args to yt-dlp
     PROGRESS_BAR_SECONDS = "2"  # String: passed directly as CLI args to yt-dlp
@@ -347,15 +346,6 @@ class Logger:
             console_handler.setFormatter(log_formatter)
             logger.addHandler(console_handler)
 
-        # Keep the last subprocess output available when a GUI-launched process
-        # stalls and the console is no longer visible.
-        try:
-            file_handler = logging.FileHandler(Config.LOG_FILE, encoding='utf-8')
-            file_handler.setFormatter(log_formatter)
-            logger.addHandler(file_handler)
-        except OSError as e:
-            logger.warning(f"Unable to create diagnostic log file: {e}")
-
     @staticmethod
     def _get_system_info() -> str:
         """Return diagnostic details that do not identify the user's machine."""
@@ -403,7 +393,7 @@ class Logger:
 
     @staticmethod
     def report_error(message: str, ctx: Optional[ErrorContext] = None) -> str:
-        """Log an error and return a short ID that links UI, local log, and Discord."""
+        """Log an error and return a short ID that links UI and Discord."""
         if ctx is None:
             ctx = ErrorContext()
 
