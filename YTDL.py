@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.07.20.05"
+__version__ = "v2026.07.20.06"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -64,7 +64,7 @@ class Config:
     # YT_DLP_VERSION_TAG is no longer used; always checks latest nightly
     
     # Deno Versioning
-    DENO_VERSION = "2.5.4"
+    DENO_VERSION = "2.9.3"
 
     # YouTube Proof of Origin (PO) Token provider. Keep this pinned so the
     # provider plugin and its JavaScript source are always installed together.
