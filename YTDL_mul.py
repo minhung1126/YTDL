@@ -297,8 +297,8 @@ if __name__ == "__main__":
         # Clear clipboard at startup
         pyperclip.copy('')
 
-        # Initialize (Update Check)
-        YTDL.YTDLManager.update_self()
+        # Keep the GUI startup lifecycle identical to the command-line mode.
+        YTDL.YTDLManager.run_startup_maintenance()
 
         root = tk.Tk()
         app = ClipboardWatcherApp(root)

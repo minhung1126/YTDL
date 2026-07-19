@@ -73,8 +73,10 @@ class Config:
     BGUTIL_POT_PROVIDER_DIRNAME = "bgutil-ytdlp-pot-provider"
     BGUTIL_POT_MARKER_FILENAME = ".ytdl-bgutil-pot-provider.json"
 
-    # FFmpeg Configuration
-    FFMPEG_VERSION_TAG = "20260712"
+    # FFmpeg configuration. The upstream project distributes a rolling
+    # "latest" archive, so this is the oldest build date verified to work
+    # with this application rather than an upstream release tag.
+    FFMPEG_MIN_BUILD_DATE = "20260712"
     
     _yt_dlp_path = shutil.which('yt-dlp')
     _yt_dlp_dir = os.path.dirname(_yt_dlp_path) if _yt_dlp_path else None
@@ -111,14 +113,49 @@ class Config:
 
     @classmethod
     def ffmpeg_status(cls) -> Tuple[bool, str]:
-        """Check that both portable FFmpeg tools are available."""
+        """Check that both portable tools run and meet the verified build date."""
         paths = cls.get_ffmpeg_paths()
         missing = [name for name, path in paths.items() if not os.path.isfile(path)]
         if missing:
             return False, f"Missing portable {', '.join(missing)}: " + ", ".join(
                 paths[name] for name in missing
             )
-        return True, "ready"
+
+        if not re.fullmatch(r"\d{8}", cls.FFMPEG_MIN_BUILD_DATE):
+            return False, "Invalid FFMPEG_MIN_BUILD_DATE configuration"
+        try:
+            datetime.strptime(cls.FFMPEG_MIN_BUILD_DATE, "%Y%m%d")
+        except ValueError:
+            return False, "Invalid FFMPEG_MIN_BUILD_DATE calendar date"
+        minimum_build_date = int(cls.FFMPEG_MIN_BUILD_DATE)
+
+        for name, path in paths.items():
+            try:
+                result = subprocess.run(
+                    [path, "-version"],
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=10,
+                )
+            except (OSError, subprocess.SubprocessError) as e:
+                return False, f"Unable to run portable {name}: {e}"
+
+            match = re.search(r"--extra-version=(\d{8})", result.stdout)
+            if result.returncode != 0 or not match:
+                return False, f"Unable to read portable {name} build date"
+            build_date = int(match.group(1))
+            if build_date < minimum_build_date:
+                return False, (
+                    f"Portable {name} build is too old: {build_date} "
+                    f"< required {minimum_build_date}"
+                )
+
+        return True, f"ready (build date >= {minimum_build_date})"
 
     # Discord Webhook
     _DISCORD_WEBHOOK_ENCODED = "aHR0cHM6Ly9kaXNjb3JkLmNvbS9hcGkvd2ViaG9va3MvMTQxMzc0NjU0MTY4MzkzNzM5MC9tWm9ZRy1mS211cnhFMFhPNWhjUmhITzBJWEREaWgyeDF2QnJ4dEFzQ0VTdEZ3M0FFTnNYamt3djQzbWFoaHhOQzFybw=="
@@ -976,13 +1013,27 @@ class YTDLManager:
             logging.error("PO provider repair completed but is not ready: %s", reason)
         return ready
 
+    @staticmethod
+    def run_startup_maintenance() -> Dict[str, bool]:
+        """Run the shared update and dependency checks required before downloading.
+
+        Both the command-line and GUI entry points must use this method so a
+        release cannot receive different update or portable-dependency
+        behaviour depending on how it is launched.  Individual repair
+        failures are logged and intentionally do not prevent yt-dlp from
+        attempting its normal fallback behaviour.
+        """
+        YTDLManager.update_self()
+        YTDLManager.update_yt_dlp()
+        return {
+            "ffmpeg": YTDLManager.ensure_ffmpeg(),
+            "pot_provider": YTDLManager.ensure_pot_provider(),
+        }
+
 def main():
     Logger.setup()
     try:
-        YTDLManager.update_self()
-        YTDLManager.update_yt_dlp() # Ensure yt-dlp is always latest nightly
-        YTDLManager.ensure_ffmpeg()
-        YTDLManager.ensure_pot_provider()
+        YTDLManager.run_startup_maintenance()
         while True:
             # Simple CLI Interaction
             if os.path.isdir(Config.META_DIR) and os.listdir(Config.META_DIR):

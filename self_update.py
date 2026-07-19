@@ -82,18 +82,52 @@ def report_error_updater(message: str, webhook_url: str, operation: str = "Self-
 
     return error_id
 
-def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
-    """Updates FFmpeg/FFprobe binaries if needed."""
+def _ffmpeg_build_date(executable_path: str) -> Optional[int]:
+    """Return an FFmpeg build's YYYYMMDD extra-version, if it is runnable."""
+    try:
+        result = subprocess.run(
+            [executable_path, "-version"],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"--extra-version=(\d{8})", result.stdout)
+    return int(match.group(1)) if result.returncode == 0 and match else None
+
+
+def update_ffmpeg(YTDL_module, webhook_url: str, minimum_build_date: str = None):
+    """Repair portable FFmpeg tools below the verified minimum build date."""
     try:
         # 1. Configuration
-        ffmpeg_tag = version_tag
-        if not ffmpeg_tag:
+        configured_minimum = minimum_build_date
+        if not configured_minimum:
             if hasattr(YTDL_module, 'Config'):
-                ffmpeg_tag = getattr(YTDL_module.Config, 'FFMPEG_VERSION_TAG', None)
+                configured_minimum = getattr(YTDL_module.Config, 'FFMPEG_MIN_BUILD_DATE', None)
 
-        if not ffmpeg_tag:
-            report_error_updater("FFMPEG_VERSION_TAG not found in YTDL.py.", webhook_url, "FFmpeg update")
+        if not isinstance(configured_minimum, str) or not re.fullmatch(r"\d{8}", configured_minimum):
+            report_error_updater(
+                "FFMPEG_MIN_BUILD_DATE must be an eight-digit YYYYMMDD value in YTDL.py.",
+                webhook_url,
+                "FFmpeg update",
+            )
             return False
+        try:
+            datetime.strptime(configured_minimum, "%Y%m%d")
+        except ValueError:
+            report_error_updater(
+                "FFMPEG_MIN_BUILD_DATE must contain a valid calendar date in YTDL.py.",
+                webhook_url,
+                "FFmpeg update",
+            )
+            return False
+        minimum_build_date_value = int(configured_minimum)
 
         # 2. Target Directory
         # Resolve yt-dlp location to find where to put ffmpeg
@@ -105,7 +139,7 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
         ffmpeg_exe = os.path.join(target_dir, 'yt-dlp-ffmpeg.exe')
         ffprobe_exe = os.path.join(target_dir, 'yt-dlp-ffprobe.exe')
         
-        # 3. Version Check
+        # 3. Availability and verified-build-date check
         should_update = False
         missing_binaries = [
             name for name, path in (("FFmpeg", ffmpeg_exe), ("FFprobe", ffprobe_exe))
@@ -115,40 +149,34 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
             print(f"{' and '.join(missing_binaries)} not found. Downloading...")
             should_update = True
         else:
-            try:
-                # Run ffmpeg -version
-                res = subprocess.run([ffmpeg_exe, '-version'], capture_output=True, text=True, encoding='utf-8', errors='ignore')
-                
-                # Extract --extra-version=YYYYMMDD
-                match = re.search(r'--extra-version=(\d+)', res.stdout)
-                
-                if match:
-                    installed_ver = int(match.group(1))
-                    if ffmpeg_tag and ffmpeg_tag.isdigit():
-                         target_ver = int(ffmpeg_tag)
-                         if target_ver > installed_ver:
-                             print(f"FFmpeg version outdated ({installed_ver} < {target_ver}). Updating...")
-                             should_update = True
-                         else:
-                             print(f"FFmpeg is up to date ({installed_ver} >= {target_ver}).")
-                    else:
-                        # Fallback for non-numeric tags
-                         if ffmpeg_tag.lower() not in res.stdout.lower():
-                            print(f"FFmpeg version match failed (Expected: {ffmpeg_tag}). Updating...")
-                            should_update = True
-                else:
-                    print("Could not determine FFmpeg version (no --extra-version). Updating...")
-                    should_update = True
-                    
-            except Exception:
-                print("Error checking FFmpeg version. Force updating...")
+            build_dates = {
+                "FFmpeg": _ffmpeg_build_date(ffmpeg_exe),
+                "FFprobe": _ffmpeg_build_date(ffprobe_exe),
+            }
+            unreadable = [name for name, build_date in build_dates.items() if build_date is None]
+            outdated = [
+                f"{name} ({build_date} < {minimum_build_date_value})"
+                for name, build_date in build_dates.items()
+                if build_date is not None and build_date < minimum_build_date_value
+            ]
+            if unreadable or outdated:
+                details = unreadable + outdated
+                print(f"Portable FFmpeg tools need repair: {', '.join(details)}.")
                 should_update = True
+            else:
+                print(
+                    "Portable FFmpeg tools meet the verified minimum build date "
+                    f"({minimum_build_date_value})."
+                )
         
         if not should_update:
             return True
 
         # 4. Download and Extract
-        print(f"Downloading FFmpeg {ffmpeg_tag}...")
+        print(
+            "Downloading the latest FFmpeg build "
+            f"(minimum verified build date: {minimum_build_date_value})..."
+        )
         
         download_tag = "latest"
         zip_url = f"https://github.com/yt-dlp/FFmpeg-Builds/releases/download/{download_tag}/ffmpeg-master-{download_tag}-win64-gpl.zip"
@@ -188,6 +216,19 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
             )
         if not all(os.path.isfile(path) for path in (ffmpeg_exe, ffprobe_exe)):
             raise RuntimeError("FFmpeg update did not install both FFmpeg and FFprobe.")
+        installed_build_dates = {
+            "FFmpeg": _ffmpeg_build_date(ffmpeg_exe),
+            "FFprobe": _ffmpeg_build_date(ffprobe_exe),
+        }
+        invalid_binaries = [
+            name for name, build_date in installed_build_dates.items()
+            if build_date is None or build_date < minimum_build_date_value
+        ]
+        if invalid_binaries:
+            raise RuntimeError(
+                "Downloaded FFmpeg archive did not meet the verified minimum build date "
+                f"{minimum_build_date_value}: {', '.join(invalid_binaries)}"
+            )
                         
         print(f"FFmpeg update completed. Binaries placed in {target_dir}")
 
