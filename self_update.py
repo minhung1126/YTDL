@@ -92,7 +92,8 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
                 ffmpeg_tag = getattr(YTDL_module.Config, 'FFMPEG_VERSION_TAG', None)
 
         if not ffmpeg_tag:
-            return
+            report_error_updater("FFMPEG_VERSION_TAG not found in YTDL.py.", webhook_url, "FFmpeg update")
+            return False
 
         # 2. Target Directory
         # Resolve yt-dlp location to find where to put ffmpeg
@@ -102,11 +103,16 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
             target_dir = os.path.dirname(yt_dlp_path)
             
         ffmpeg_exe = os.path.join(target_dir, 'yt-dlp-ffmpeg.exe')
+        ffprobe_exe = os.path.join(target_dir, 'yt-dlp-ffprobe.exe')
         
         # 3. Version Check
         should_update = False
-        if not os.path.exists(ffmpeg_exe):
-            print(f"FFmpeg not found at {ffmpeg_exe}. Downloading...")
+        missing_binaries = [
+            name for name, path in (("FFmpeg", ffmpeg_exe), ("FFprobe", ffprobe_exe))
+            if not os.path.isfile(path)
+        ]
+        if missing_binaries:
+            print(f"{' and '.join(missing_binaries)} not found. Downloading...")
             should_update = True
         else:
             try:
@@ -139,7 +145,7 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
                 should_update = True
         
         if not should_update:
-            return
+            return True
 
         # 4. Download and Extract
         print(f"Downloading FFmpeg {ffmpeg_tag}...")
@@ -152,6 +158,7 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
         
         print("Extracting FFmpeg binaries...")
         with ZipFile(io.BytesIO(resp.content)) as z:
+            extracted_binaries = set()
             for member in z.namelist():
                 # Extract all .exe files in 'bin/'
                 if '/bin/' in member and member.endswith('.exe'):
@@ -171,6 +178,16 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
                     
                     with z.open(member) as source, open(target_path, 'wb') as target:
                         shutil.copyfileobj(source, target)
+                    extracted_binaries.add(new_filename)
+
+        expected_binaries = {'yt-dlp-ffmpeg.exe', 'yt-dlp-ffprobe.exe'}
+        if extracted_binaries != expected_binaries:
+            raise RuntimeError(
+                "Downloaded FFmpeg archive is missing required binaries: "
+                f"{', '.join(sorted(expected_binaries - extracted_binaries))}"
+            )
+        if not all(os.path.isfile(path) for path in (ffmpeg_exe, ffprobe_exe)):
+            raise RuntimeError("FFmpeg update did not install both FFmpeg and FFprobe.")
                         
         print(f"FFmpeg update completed. Binaries placed in {target_dir}")
 
@@ -185,8 +202,11 @@ def update_ffmpeg(YTDL_module, webhook_url: str, version_tag: str = None):
                 except OSError as e:
                     print(f"Failed to remove legacy binary {legacy_bin}: {e}")
 
+        return True
+
     except Exception as e:
         report_error_updater(f"FFmpeg update failed: {e}\n{traceback.format_exc()}", webhook_url)
+        return False
 
 def _config_value(YTDL_module, name, default=None):
     config = getattr(YTDL_module, "Config", YTDL_module)
@@ -478,6 +498,19 @@ def program_files_update(webhook_url: str):
     return True
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--ensure-ffmpeg":
+        webhook_url = sys.argv[2] if len(sys.argv) > 2 else ""
+        try:
+            import YTDL
+        except ImportError:
+            report_error_updater(
+                f"Failed to import YTDL.py for FFmpeg repair.\n{traceback.format_exc()}",
+                webhook_url,
+                "FFmpeg update",
+            )
+            sys.exit(1)
+        sys.exit(0 if update_ffmpeg(YTDL, webhook_url) else 1)
+
     if len(sys.argv) > 1 and sys.argv[1] == "--ensure-pot-provider":
         webhook_url = sys.argv[2] if len(sys.argv) > 2 else ""
         try:

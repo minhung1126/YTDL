@@ -79,25 +79,46 @@ class Config:
     _yt_dlp_path = shutil.which('yt-dlp')
     _yt_dlp_dir = os.path.dirname(_yt_dlp_path) if _yt_dlp_path else None
     
-    # Try to find ffmpeg/ffprobe next to yt-dlp first
-    FFMPEG_BINARY = None
-    if _yt_dlp_dir:
-        _local_ffmpeg = os.path.join(_yt_dlp_dir, 'yt-dlp-ffmpeg.exe')
-        if os.path.exists(_local_ffmpeg):
-            FFMPEG_BINARY = _local_ffmpeg
-        else:
-            print("CRITICAL: FFmpeg binary not found in yt-dlp directory.")
-            print("Please perform a manual update or reinstall to fetch missing dependencies.")
-    
-    # We do NOT fallback to PATH as per user request
-    
-    FFPROBE_BINARY = None
-    if _yt_dlp_dir:
-        _local_ffprobe = os.path.join(_yt_dlp_dir, 'yt-dlp-ffprobe.exe')
-        if os.path.exists(_local_ffprobe):
-            FFPROBE_BINARY = _local_ffprobe
-    
-    # We do NOT fallback to PATH as per user request
+    # Try to find ffmpeg/ffprobe next to yt-dlp first. Missing files are
+    # repaired at startup through self_update.py; do not fall back to PATH.
+    FFMPEG_BINARY = (
+        os.path.join(_yt_dlp_dir, "yt-dlp-ffmpeg.exe")
+        if _yt_dlp_dir and os.path.isfile(os.path.join(_yt_dlp_dir, "yt-dlp-ffmpeg.exe"))
+        else None
+    )
+    FFPROBE_BINARY = (
+        os.path.join(_yt_dlp_dir, "yt-dlp-ffprobe.exe")
+        if _yt_dlp_dir and os.path.isfile(os.path.join(_yt_dlp_dir, "yt-dlp-ffprobe.exe"))
+        else None
+    )
+
+    @classmethod
+    def get_ffmpeg_paths(cls) -> Dict[str, str]:
+        """Return the portable FFmpeg and FFprobe locations next to yt-dlp."""
+        target_dir = cls.get_yt_dlp_dir()
+        return {
+            "ffmpeg": os.path.join(target_dir, "yt-dlp-ffmpeg.exe"),
+            "ffprobe": os.path.join(target_dir, "yt-dlp-ffprobe.exe"),
+        }
+
+    @classmethod
+    def refresh_ffmpeg_binaries(cls) -> bool:
+        """Refresh portable binary paths after an FFmpeg repair or update."""
+        paths = cls.get_ffmpeg_paths()
+        cls.FFMPEG_BINARY = paths["ffmpeg"] if os.path.isfile(paths["ffmpeg"]) else None
+        cls.FFPROBE_BINARY = paths["ffprobe"] if os.path.isfile(paths["ffprobe"]) else None
+        return bool(cls.FFMPEG_BINARY and cls.FFPROBE_BINARY)
+
+    @classmethod
+    def ffmpeg_status(cls) -> Tuple[bool, str]:
+        """Check that both portable FFmpeg tools are available."""
+        paths = cls.get_ffmpeg_paths()
+        missing = [name for name, path in paths.items() if not os.path.isfile(path)]
+        if missing:
+            return False, f"Missing portable {', '.join(missing)}: " + ", ".join(
+                paths[name] for name in missing
+            )
+        return True, "ready"
 
     # Discord Webhook
     _DISCORD_WEBHOOK_ENCODED = "aHR0cHM6Ly9kaXNjb3JkLmNvbS9hcGkvd2ViaG9va3MvMTQxMzc0NjU0MTY4MzkzNzM5MC9tWm9ZRy1mS211cnhFMFhPNWhjUmhITzBJWEREaWgyeDF2QnJ4dEFzQ0VTdEZ3M0FFTnNYamt3djQzbWFoaHhOQzFybw=="
@@ -849,6 +870,61 @@ class YTDLManager:
              logging.error(f"Failed to check/update yt-dlp: {e}")
 
     @staticmethod
+    def ensure_ffmpeg():
+        """Repair portable FFmpeg tools when either required binary is missing."""
+        ready, reason = Config.ffmpeg_status()
+        if ready:
+            Config.refresh_ffmpeg_binaries()
+            logging.info("Portable FFmpeg and FFprobe are ready.")
+            return True
+
+        logging.info("Portable FFmpeg tools need repair: %s", reason)
+        updater_path = os.path.join(Config._APP_DIR, "self_update.py")
+        downloaded_updater = False
+        try:
+            if not os.path.isfile(updater_path):
+                repo = "minhung1126/YTDL"
+                updater_url = f"https://raw.githubusercontent.com/{repo}/main/self_update.py"
+                response = _http_get_with_retry(updater_url, timeout=15)
+                with open(updater_path, "wb") as f:
+                    f.write(response.content)
+                downloaded_updater = True
+
+            result = subprocess.run(
+                [sys.executable, updater_path, "--ensure-ffmpeg", Config.DISCORD_WEBHOOK],
+                cwd=Config._APP_DIR,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=900,
+            )
+            output = result.stdout.strip()
+            if output:
+                logging.info("FFmpeg repair output:\n%s", output[-8000:])
+            if result.returncode != 0:
+                logging.error("FFmpeg repair exited with code %s.", result.returncode)
+                return False
+        except Exception:
+            logging.error("Unable to repair portable FFmpeg tools.\n%s", traceback.format_exc())
+            return False
+        finally:
+            if downloaded_updater:
+                try:
+                    os.remove(updater_path)
+                except OSError:
+                    logging.warning("Unable to remove temporary updater: %s", updater_path)
+
+        ready, reason = Config.ffmpeg_status()
+        if ready:
+            Config.refresh_ffmpeg_binaries()
+        else:
+            logging.error("FFmpeg repair completed but tools are not ready: %s", reason)
+        return ready
+
+    @staticmethod
     def ensure_pot_provider():
         """Repair the portable provider only when its local integrity check fails."""
         ready, reason = Config.pot_provider_status()
@@ -905,6 +981,7 @@ def main():
     try:
         YTDLManager.update_self()
         YTDLManager.update_yt_dlp() # Ensure yt-dlp is always latest nightly
+        YTDLManager.ensure_ffmpeg()
         YTDLManager.ensure_pot_provider()
         while True:
             # Simple CLI Interaction
