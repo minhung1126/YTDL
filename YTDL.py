@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.07.20.04"
+__version__ = "v2026.07.20.05"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -72,6 +72,11 @@ class Config:
     BGUTIL_POT_PLUGIN_FILENAME = "bgutil-ytdlp-pot-provider.zip"
     BGUTIL_POT_PROVIDER_DIRNAME = "bgutil-ytdlp-pot-provider"
     BGUTIL_POT_MARKER_FILENAME = ".ytdl-bgutil-pot-provider.json"
+    # Keep this aligned with bgutil-ytdlp-pot-provider's internal script
+    # version check.  A provider that cannot finish this probe will make
+    # yt-dlp abort before it can select a YouTube format.
+    POT_PROVIDER_PROBE_TIMEOUT_SECONDS = 15
+    _pot_provider_status_cache: Optional[Tuple[bool, str]] = None
 
     # FFmpeg configuration. The upstream project distributes a rolling
     # "latest" archive, so this is the oldest build date verified to work
@@ -202,14 +207,77 @@ class Config:
         }
 
     @classmethod
-    def pot_provider_status(cls) -> Tuple[bool, str]:
-        """Check local provider integrity without contacting YouTube or minting a token."""
+    def _pot_provider_script_probe(cls, paths: Dict[str, str]) -> Tuple[bool, str]:
+        """Run the exact local version check used by the Deno provider plugin."""
+        home_dir = os.getenv("HOME") or os.getenv("USERPROFILE")
+        xdg_cache = os.getenv("XDG_CACHE_HOME")
+        if xdg_cache is not None:
+            cache_dir = os.path.abspath(os.path.join(xdg_cache, cls.BGUTIL_POT_PROVIDER_DIRNAME))
+        elif home_dir:
+            cache_dir = os.path.abspath(os.path.join(home_dir, ".cache", cls.BGUTIL_POT_PROVIDER_DIRNAME))
+        else:
+            cache_dir = paths["server_home"]
+
+        # The plugin escapes commas before passing paths to Deno.  Matching it
+        # here makes this a meaningful preflight rather than a superficial
+        # Deno executable check.
+        def escpath(*values: str) -> str:
+            return ",".join(value.replace(",", ",,") for value in values)
+
+        environment = os.environ.copy()
+        environment.update({
+            "DENO_NO_PROMPT": "1",
+            "DENO_NO_UPDATE_CHECK": "1",
+            "FORCE_COLOR": "false",
+        })
+        command = [
+            paths["deno"], "run", "--allow-env", "--allow-net",
+            f"--allow-ffi={escpath(paths['node_modules'])}",
+            f"--allow-write={escpath(cache_dir)}",
+            f"--allow-read={escpath(cache_dir, paths['node_modules'])}",
+            paths["script"], "--version",
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=environment,
+                timeout=cls.POT_PROVIDER_PROBE_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            return False, (
+                "PO provider script version check timed out after "
+                f"{cls.POT_PROVIDER_PROBE_TIMEOUT_SECONDS} seconds"
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            return False, f"Unable to run PO provider script version check: {e}"
+        if result.returncode != 0:
+            output = result.stdout.strip()
+            detail = f": {output[-500:]}" if output else ""
+            return False, f"PO provider script version check exited with code {result.returncode}{detail}"
+        return True, "ready"
+
+    @classmethod
+    def pot_provider_status(cls, force_probe: bool = False) -> Tuple[bool, str]:
+        """Verify the provider files and that its script can start within yt-dlp's limit."""
+        if cls._pot_provider_status_cache is not None and not force_probe:
+            return cls._pot_provider_status_cache
         paths = cls.get_pot_provider_paths()
         for name in ("deno", "plugin", "script"):
             if not os.path.isfile(paths[name]):
-                return False, f"Missing PO provider {name}: {paths[name]}"
+                result = False, f"Missing PO provider {name}: {paths[name]}"
+                cls._pot_provider_status_cache = result
+                return result
         if not os.path.isdir(paths["node_modules"]):
-            return False, f"Missing PO provider dependencies: {paths['node_modules']}"
+            result = False, f"Missing PO provider dependencies: {paths['node_modules']}"
+            cls._pot_provider_status_cache = result
+            return result
         try:
             deno_result = subprocess.run(
                 [paths["deno"], "--version"],
@@ -224,25 +292,38 @@ class Config:
             )
             deno_match = re.search(r"^deno\s+(\S+)", deno_result.stdout, re.MULTILINE)
             if deno_result.returncode != 0 or not deno_match:
-                return False, "Unable to read portable Deno version"
+                result = False, "Unable to read portable Deno version"
+                cls._pot_provider_status_cache = result
+                return result
             if deno_match.group(1) != cls.DENO_VERSION:
-                return False, (
+                result = False, (
                     "Portable Deno version mismatch: "
                     f"expected {cls.DENO_VERSION}, got {deno_match.group(1)}"
                 )
+                cls._pot_provider_status_cache = result
+                return result
         except (OSError, subprocess.SubprocessError) as e:
-            return False, f"Unable to run portable Deno: {e}"
+            result = False, f"Unable to run portable Deno: {e}"
+            cls._pot_provider_status_cache = result
+            return result
         try:
             with open(paths["marker"], "r", encoding="utf-8") as f:
                 marker = json.load(f)
         except (OSError, ValueError, TypeError) as e:
-            return False, f"Cannot read PO provider marker: {e}"
+            result = False, f"Cannot read PO provider marker: {e}"
+            cls._pot_provider_status_cache = result
+            return result
         if marker.get("version") != cls.BGUTIL_POT_PROVIDER_VERSION:
-            return False, (
+            result = False, (
                 "PO provider version mismatch: "
                 f"expected {cls.BGUTIL_POT_PROVIDER_VERSION}, got {marker.get('version')!r}"
             )
-        return True, "ready"
+            cls._pot_provider_status_cache = result
+            return result
+
+        result = cls._pot_provider_script_probe(paths)
+        cls._pot_provider_status_cache = result
+        return result
 
 class YTDLError(Exception):
     """Base class for YTDL exceptions."""
@@ -1003,9 +1084,18 @@ class YTDLManager:
 
     @staticmethod
     def ensure_pot_provider():
-        """Repair the portable provider only when its local integrity check fails."""
+        """Repair the portable provider when files or its script probe are unhealthy."""
+        checks = 0
+
+        def status_check() -> Tuple[bool, str]:
+            # A failed pre-repair result is cached to avoid delaying every
+            # download.  Re-probe after the updater has repaired or warmed it.
+            nonlocal checks
+            checks += 1
+            return Config.pot_provider_status(force_probe=checks > 1)
+
         return YTDLManager._ensure_component_with_updater(
-            Config.pot_provider_status,
+            status_check,
             "--ensure-pot-provider",
             "YouTube PO Token provider is ready.",
             "YouTube PO Token provider",

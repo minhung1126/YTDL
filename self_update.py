@@ -353,6 +353,59 @@ def _pot_provider_is_current(provider_dir: str, plugin_path: str, marker_filenam
         return False
 
 
+def _probe_pot_provider_script(deno_path: str, server_home: str, timeout: int = 90) -> tuple[bool, str]:
+    """Warm and verify the same Deno command that yt-dlp uses for this provider."""
+    node_modules = os.path.join(server_home, "node_modules")
+    script_path = os.path.join(server_home, "src", "generate_once.ts")
+    home_dir = os.getenv("HOME") or os.getenv("USERPROFILE")
+    xdg_cache = os.getenv("XDG_CACHE_HOME")
+    if xdg_cache is not None:
+        cache_dir = os.path.abspath(os.path.join(xdg_cache, "bgutil-ytdlp-pot-provider"))
+    elif home_dir:
+        cache_dir = os.path.abspath(os.path.join(home_dir, ".cache", "bgutil-ytdlp-pot-provider"))
+    else:
+        cache_dir = server_home
+
+    def escpath(*values: str) -> str:
+        return ",".join(value.replace(",", ",,") for value in values)
+
+    environment = os.environ.copy()
+    environment.update({
+        "DENO_NO_PROMPT": "1",
+        "DENO_NO_UPDATE_CHECK": "1",
+        "FORCE_COLOR": "false",
+    })
+    command = [
+        deno_path, "run", "--allow-env", "--allow-net",
+        f"--allow-ffi={escpath(node_modules)}",
+        f"--allow-write={escpath(cache_dir)}",
+        f"--allow-read={escpath(cache_dir, node_modules)}",
+        script_path, "--version",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=environment,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"Provider script version check timed out after {timeout} seconds."
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, f"Unable to run provider script version check: {e}"
+    if result.returncode:
+        output = result.stdout.strip()
+        detail = f"\n{output[-8000:]}" if output else ""
+        return False, f"Provider script version check exited with code {result.returncode}.{detail}"
+    return True, "ready"
+
+
 def update_pot_provider(YTDL_module, webhook_url: str, deno_path: str) -> bool:
     """Update BgUtils only when its configured release is missing or outdated."""
     version = _config_value(YTDL_module, "BGUTIL_POT_PROVIDER_VERSION")
@@ -368,8 +421,11 @@ def update_pot_provider(YTDL_module, webhook_url: str, deno_path: str) -> bool:
     plugin_path = os.path.join(plugin_dir, plugin_filename)
     provider_dir = os.path.join(target_dir, provider_dirname)
     if _pot_provider_is_current(provider_dir, plugin_path, marker_filename, version):
-        print(f"BgUtils PO provider is up to date ({version}).")
-        return True
+        ready, reason = _probe_pot_provider_script(deno_path, os.path.join(provider_dir, "server"))
+        if ready:
+            print(f"BgUtils PO provider is up to date ({version}).")
+            return True
+        print(f"BgUtils PO provider probe failed; reinstalling: {reason}")
 
     stage_dir = tempfile.mkdtemp(prefix=".ytdl-bgutil-", dir=target_dir)
     backup_dir = None
@@ -420,6 +476,9 @@ def update_pot_provider(YTDL_module, webhook_url: str, deno_path: str) -> bool:
             raise RuntimeError(f"Deno dependency installation failed:\n{result.stdout[-8000:]}")
         if not os.path.isdir(os.path.join(server_home, "node_modules")):
             raise FileNotFoundError("Deno did not create the provider node_modules directory.")
+        ready, reason = _probe_pot_provider_script(deno_path, server_home)
+        if not ready:
+            raise RuntimeError(f"Provider script did not pass its startup probe: {reason}")
 
         if os.path.isdir(provider_dir):
             backup_dir = os.path.join(stage_dir, "previous-provider")

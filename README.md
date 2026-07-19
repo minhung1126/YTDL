@@ -34,7 +34,7 @@
 
 ## 啟動與可攜式工具流程
 
-無論使用命令列或圖形介面，程式每次啟動都會先檢查程式本體與 `yt-dlp` 更新，再檢查可攜式 FFmpeg/FFprobe 與 provider 的本機完整性。provider 檢查涵蓋 plugin ZIP、Deno script、`node_modules`、版本標記與 portable Deno 是否存在；這些檢查不會向 YouTube 發出測試請求，也不會產生 PO Token。
+無論使用命令列或圖形介面，程式每次啟動都會先檢查程式本體與 `yt-dlp` 更新，再檢查可攜式 FFmpeg/FFprobe 與 provider 的本機完整性。provider 檢查涵蓋 plugin ZIP、Deno script、`node_modules`、版本標記、portable Deno，以及與 yt-dlp 相同的本機 `generate_once.ts --version` 啟動探測；這不會向 YouTube 發出測試請求，也不會產生 PO Token。探測無法在 yt-dlp 的 15 秒限制內完成時，程式會修復並預熱 provider；若仍失敗，下載會略過 provider 並保留 yt-dlp 的原有 fallback 行為。
 
 ```mermaid
 flowchart TD
