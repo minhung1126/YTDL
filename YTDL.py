@@ -14,13 +14,13 @@ import io
 import time
 from datetime import datetime, timezone
 from uuid import uuid4
-from typing import Tuple, List, Optional, Dict, Callable
+from typing import Any, Tuple, List, Optional, Dict, Callable
 from dataclasses import dataclass, field
 
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.07.21.01"
+__version__ = "v2026.07.21.02"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -521,6 +521,179 @@ class SubprocessRunner:
         lines = [ansi_escape.sub('', l).strip() for l in log_text.splitlines() if l.strip()]
         return lines[-1] if lines else "Unknown Error"
 
+
+class PreferredFormatSelector:
+    """Choose a video/audio pair using the application's format policy.
+
+    yt-dlp's ``-S`` option cannot express a custom order for repeated codec
+    fields.  The selector therefore resolves the pair from the metadata's
+    format list and passes the resulting format IDs back to yt-dlp.
+    """
+
+    _CODEC_PRIORITY = {
+        "vp9": 3,
+        "avc": 2,
+        "av1": 1,
+    }
+    _REQUIRED_AUDIO_CODEC = {
+        "vp9": "opus",
+        "avc": "mp4a",
+        "av1": "opus",
+    }
+    _HDR_PRIORITY = {
+        "DV": -1,  # Preserve yt-dlp's hdr:12 compatibility preference.
+        "SDR": 0,
+        "HLG": 1,
+        "HDR10": 2,
+        "HDR10+": 3,
+        "HDR12": 4,
+    }
+    _PROTOCOL_PRIORITY = {
+        "https": 5,
+        "ftps": 5,
+        "http": 4,
+        "ftp": 4,
+        "m3u8_native": 3,
+        "m3u8": 2,
+        "http_dash_segments": 1,
+    }
+
+    @classmethod
+    def select(cls, formats: Any) -> Optional[str]:
+        """Return ``video_id+audio_id`` for the preferred matching pair.
+
+        The order is resolution, FPS, dynamic range, codec family, and
+        transport.  Codec family only participates after the visual
+        properties are tied: VP9+Opus, then AVC+M4A, then AV1+Opus.
+        """
+        if not isinstance(formats, list):
+            return None
+
+        video_formats = [fmt for fmt in formats if cls._is_video_only(fmt)]
+        audio_formats = [fmt for fmt in formats if cls._is_audio_only(fmt)]
+        candidates = []
+        for video in video_formats:
+            family = cls._video_family(video)
+            if family is None:
+                continue
+            matching_audio = [
+                audio for audio in audio_formats
+                if cls._matches_required_audio(audio, family)
+            ]
+            if not matching_audio:
+                continue
+            audio = max(matching_audio, key=cls._audio_sort_key)
+            candidates.append((video, audio, family))
+
+        if not candidates:
+            return None
+
+        video, audio, _ = max(candidates, key=cls._pair_sort_key)
+        video_id = cls._format_id(video)
+        audio_id = cls._format_id(audio)
+        if not video_id or not audio_id:
+            return None
+        return f"{video_id}+{audio_id}"
+
+    @classmethod
+    def _pair_sort_key(cls, candidate: Tuple[dict, dict, str]) -> tuple:
+        video, audio, family = candidate
+        return (
+            cls._resolution(video),
+            cls._number(video.get("fps")),
+            cls._hdr_priority(video),
+            cls._CODEC_PRIORITY[family],
+            cls._protocol_priority(video),
+            cls._audio_sort_key(audio),
+            cls._format_id(video),
+        )
+
+    @classmethod
+    def _audio_sort_key(cls, audio: dict) -> tuple:
+        return (
+            not cls._is_drc(audio),
+            cls._number(audio.get("audio_channels")),
+            cls._number(audio.get("asr")),
+            cls._number(audio.get("abr")),
+            cls._protocol_priority(audio),
+            cls._format_id(audio),
+        )
+
+    @staticmethod
+    def _number(value: Any) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @classmethod
+    def _resolution(cls, fmt: dict) -> float:
+        width = cls._number(fmt.get("width"))
+        height = cls._number(fmt.get("height"))
+        if width and height:
+            return min(width, height)
+        return height or width
+
+    @classmethod
+    def _hdr_priority(cls, fmt: dict) -> int:
+        dynamic_range = str(fmt.get("dynamic_range") or "SDR").upper()
+        return cls._HDR_PRIORITY.get(dynamic_range, 0)
+
+    @classmethod
+    def _protocol_priority(cls, fmt: dict) -> int:
+        return cls._PROTOCOL_PRIORITY.get(str(fmt.get("protocol") or "").lower(), 0)
+
+    @staticmethod
+    def _format_id(fmt: dict) -> str:
+        format_id = fmt.get("format_id")
+        return str(format_id) if format_id is not None else ""
+
+    @classmethod
+    def _is_drc(cls, fmt: dict) -> bool:
+        """Avoid dynamic-range-compressed audio when an equivalent track exists."""
+        return "drc" in " ".join((
+            cls._format_id(fmt),
+            str(fmt.get("format_note") or ""),
+            str(fmt.get("format") or ""),
+        )).lower()
+
+    @staticmethod
+    def _is_video_only(fmt: Any) -> bool:
+        if not isinstance(fmt, dict):
+            return False
+        return (
+            str(fmt.get("vcodec") or "none").lower() != "none"
+            and str(fmt.get("acodec") or "none").lower() == "none"
+        )
+
+    @staticmethod
+    def _is_audio_only(fmt: Any) -> bool:
+        if not isinstance(fmt, dict):
+            return False
+        return (
+            str(fmt.get("vcodec") or "none").lower() == "none"
+            and str(fmt.get("acodec") or "none").lower() != "none"
+        )
+
+    @staticmethod
+    def _video_family(fmt: dict) -> Optional[str]:
+        vcodec = str(fmt.get("vcodec") or "").lower()
+        if re.match(r"^vp0?9", vcodec):
+            return "vp9"
+        if re.match(r"^(avc1|avc|h264)", vcodec):
+            return "avc"
+        if re.match(r"^(av01|av1)", vcodec):
+            return "av1"
+        return None
+
+    @classmethod
+    def _matches_required_audio(cls, audio: dict, family: str) -> bool:
+        acodec = str(audio.get("acodec") or "").lower()
+        required_codec = cls._REQUIRED_AUDIO_CODEC[family]
+        if required_codec == "opus":
+            return acodec == "opus"
+        return acodec.startswith("mp4a") and str(audio.get("ext") or "").lower() == "m4a"
+
 class Video:
     PRESERVED_METADATA_FIELDS = (
         "playlist",
@@ -562,10 +735,19 @@ class Video:
         is_playlist = bool(self.playlist) or bool(self.playlist_url) or Config.is_playlist_or_channel_url(self.webpage_url)
         template = self._get_output_template(is_playlist)
         
+        selected_format = PreferredFormatSelector.select(self.meta.get("formats"))
+        if selected_format:
+            format_args = ['-f', selected_format]
+            logging.info("Selected preferred format pair: %s", selected_format)
+        else:
+            # Keep the former behaviour for sites whose metadata has no
+            # compatible video-only/audio-only pair.
+            format_args = ['-f', 'bv+ba', '-S', 'res,fps,hdr:12,proto']
+            logging.warning("No preferred codec pair found; falling back to yt-dlp format sorting.")
+
         args = [
             Config.EXECUTABLE,
-            '-f', 'bv+ba',
-            '-S', 'res,hdr,+codec:vp9.2:opus,+codec:vp9:opus,+codec:vp09:opus,+codec:avc1:m4a,+codec:av01:opus,vbr',
+            *format_args,
             '--embed-subs', '--sub-langs', 'all,-live_chat',
             '--embed-thumbnail', '--embed-metadata',
             # Prevent FFmpeg from blocking on an inherited console handle when
