@@ -316,204 +316,24 @@ def ensure_portable_deno(YTDL_module, webhook_url: str) -> Optional[str]:
         shutil.rmtree(stage_dir, ignore_errors=True)
 
 
-def _extract_source_archive(archive_bytes: bytes, destination: str):
-    """Extract a GitHub source archive while rejecting path traversal and links."""
-    with ZipFile(io.BytesIO(archive_bytes)) as archive:
-        files = [info for info in archive.infolist() if info.filename and not info.is_dir()]
-        roots = {info.filename.split("/", 1)[0] for info in files if "/" in info.filename}
-        if len(roots) != 1:
-            raise ValueError("Provider source archive has an unexpected root layout.")
-        root = roots.pop() + "/"
-        destination_abs = os.path.abspath(destination)
-        for info in files:
-            if not info.filename.startswith(root):
-                raise ValueError(f"Unexpected archive entry: {info.filename}")
-            if (info.external_attr >> 16) & 0o170000 == 0o120000:
-                raise ValueError(f"Provider source archive contains a symbolic link: {info.filename}")
-            relative_path = info.filename[len(root):]
-            target_path = os.path.abspath(os.path.join(destination_abs, *relative_path.split("/")))
-            if os.path.commonpath([destination_abs, target_path]) != destination_abs:
-                raise ValueError(f"Unsafe archive entry: {info.filename}")
-            os.makedirs(os.path.dirname(target_path), exist_ok=True)
-            with archive.open(info) as source, open(target_path, "wb") as target:
-                shutil.copyfileobj(source, target)
-
-
-def _pot_provider_is_current(provider_dir: str, plugin_path: str, marker_filename: str, version: str) -> bool:
-    """Return whether the installed provider matches the configured release."""
-    marker_path = os.path.join(provider_dir, marker_filename)
-    script_path = os.path.join(provider_dir, "server", "src", "generate_once.ts")
-    node_modules = os.path.join(provider_dir, "server", "node_modules")
-    if not (os.path.isfile(plugin_path) and os.path.isfile(script_path) and os.path.isdir(node_modules)):
-        return False
-    try:
-        with open(marker_path, "r", encoding="utf-8") as marker:
-            return json.load(marker).get("version") == version
-    except (OSError, ValueError, TypeError):
-        return False
-
-
-def _probe_pot_provider_script(deno_path: str, server_home: str, timeout: int = 90) -> tuple[bool, str]:
-    """Warm and verify the same Deno command that yt-dlp uses for this provider."""
-    node_modules = os.path.join(server_home, "node_modules")
-    script_path = os.path.join(server_home, "src", "generate_once.ts")
-    home_dir = os.getenv("HOME") or os.getenv("USERPROFILE")
-    xdg_cache = os.getenv("XDG_CACHE_HOME")
-    if xdg_cache is not None:
-        cache_dir = os.path.abspath(os.path.join(xdg_cache, "bgutil-ytdlp-pot-provider"))
-    elif home_dir:
-        cache_dir = os.path.abspath(os.path.join(home_dir, ".cache", "bgutil-ytdlp-pot-provider"))
-    else:
-        cache_dir = server_home
-
-    def escpath(*values: str) -> str:
-        return ",".join(value.replace(",", ",,") for value in values)
-
-    environment = os.environ.copy()
-    environment.update({
-        "DENO_NO_PROMPT": "1",
-        "DENO_NO_UPDATE_CHECK": "1",
-        "FORCE_COLOR": "false",
-    })
-    command = [
-        deno_path, "run", "--allow-env", "--allow-net",
-        f"--allow-ffi={escpath(node_modules)}",
-        f"--allow-write={escpath(cache_dir)}",
-        f"--allow-read={escpath(cache_dir, node_modules)}",
-        script_path, "--version",
-    ]
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=environment,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return False, f"Provider script version check timed out after {timeout} seconds."
-    except (OSError, subprocess.SubprocessError) as e:
-        return False, f"Unable to run provider script version check: {e}"
-    if result.returncode:
-        output = result.stdout.strip()
-        detail = f"\n{output[-8000:]}" if output else ""
-        return False, f"Provider script version check exited with code {result.returncode}.{detail}"
-    return True, "ready"
-
-
-def update_pot_provider(YTDL_module, webhook_url: str, deno_path: str) -> bool:
-    """Update BgUtils only when its configured release is missing or outdated."""
-    version = _config_value(YTDL_module, "BGUTIL_POT_PROVIDER_VERSION")
-    plugin_filename = _config_value(YTDL_module, "BGUTIL_POT_PLUGIN_FILENAME")
-    provider_dirname = _config_value(YTDL_module, "BGUTIL_POT_PROVIDER_DIRNAME")
-    marker_filename = _config_value(YTDL_module, "BGUTIL_POT_MARKER_FILENAME")
-    if not all((version, plugin_filename, provider_dirname, marker_filename)):
-        report_error_updater("BgUtils PO provider configuration is incomplete.", webhook_url, "PO provider update")
-        return False
-
+def remove_legacy_pot_provider_files(YTDL_module) -> None:
+    """Remove obsolete PO Provider artifacts from yt-dlp's portable directory."""
+    # TODO(Sakamoto): Remove this temporary compatibility cleanup after legacy
+    # installations have had sufficient time to migrate away from PO Provider.
     target_dir = _portable_target_dir(YTDL_module)
-    plugin_dir = os.path.join(target_dir, "yt-dlp-plugins")
-    plugin_path = os.path.join(plugin_dir, plugin_filename)
-    provider_dir = os.path.join(target_dir, provider_dirname)
-    if _pot_provider_is_current(provider_dir, plugin_path, marker_filename, version):
-        ready, reason = _probe_pot_provider_script(deno_path, os.path.join(provider_dir, "server"))
-        if ready:
-            print(f"BgUtils PO provider is up to date ({version}).")
-            return True
-        print(f"BgUtils PO provider probe failed; reinstalling: {reason}")
-
-    stage_dir = tempfile.mkdtemp(prefix=".ytdl-bgutil-", dir=target_dir)
-    backup_dir = None
-    provider_replaced = False
+    provider_dir = os.path.join(target_dir, "bgutil-ytdlp-pot-provider")
+    plugin_path = os.path.join(
+        target_dir, "yt-dlp-plugins", "bgutil-ytdlp-pot-provider.zip"
+    )
     try:
-        os.makedirs(plugin_dir, exist_ok=True)
-        plugin_url = (
-            "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/download/"
-            f"{version}/{plugin_filename}"
-        )
-        source_url = (
-            "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/"
-            f"{version}.zip"
-        )
-        print(f"Downloading BgUtils PO provider {version}...")
-        plugin_response = _http_get_with_retry(plugin_url, timeout=(10, 120))
-        source_response = _http_get_with_retry(source_url, timeout=(10, 120))
-
-        with ZipFile(io.BytesIO(plugin_response.content)) as plugin_archive:
-            if not any(name.startswith("yt_dlp_plugins/") for name in plugin_archive.namelist()):
-                raise ValueError("Provider plugin archive does not contain yt_dlp_plugins.")
-
-        stage_plugin = os.path.join(stage_dir, plugin_filename)
-        with open(stage_plugin, "wb") as f:
-            f.write(plugin_response.content)
-
-        stage_provider = os.path.join(stage_dir, provider_dirname)
-        _extract_source_archive(source_response.content, stage_provider)
-        server_home = os.path.join(stage_provider, "server")
-        script_path = os.path.join(server_home, "src", "generate_once.ts")
-        if not os.path.isfile(script_path):
-            raise FileNotFoundError(f"Provider Deno script is missing: {script_path}")
-
-        print("Initializing BgUtils PO provider with portable Deno...")
-        result = subprocess.run(
-            [deno_path, "install", "--allow-scripts=npm:canvas", "--frozen"],
-            cwd=server_home,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=900,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Deno dependency installation failed:\n{result.stdout[-8000:]}")
-        if not os.path.isdir(os.path.join(server_home, "node_modules")):
-            raise FileNotFoundError("Deno did not create the provider node_modules directory.")
-        ready, reason = _probe_pot_provider_script(deno_path, server_home)
-        if not ready:
-            raise RuntimeError(f"Provider script did not pass its startup probe: {reason}")
-
         if os.path.isdir(provider_dir):
-            backup_dir = os.path.join(stage_dir, "previous-provider")
-            os.replace(provider_dir, backup_dir)
-        os.replace(stage_provider, provider_dir)
-        provider_replaced = True
-        os.replace(stage_plugin, plugin_path)
-        marker_path = os.path.join(provider_dir, marker_filename)
-        with open(marker_path, "w", encoding="utf-8") as marker:
-            json.dump({"version": version, "installed_at": datetime.now(timezone.utc).isoformat()}, marker)
-
-        if backup_dir and os.path.isdir(backup_dir):
-            shutil.rmtree(backup_dir, ignore_errors=True)
-        print(f"BgUtils PO provider {version} is ready.")
-        return True
-    except Exception:
-        if provider_replaced and backup_dir and os.path.isdir(backup_dir):
-            try:
-                shutil.rmtree(provider_dir, ignore_errors=True)
-                os.replace(backup_dir, provider_dir)
-            except OSError:
-                pass
-        report_error_updater(
-            f"Failed to install BgUtils PO provider.\n{traceback.format_exc()}",
-            webhook_url,
-            "PO provider update",
-        )
-        return False
-    finally:
-        shutil.rmtree(stage_dir, ignore_errors=True)
-
-
-def ensure_pot_provider(YTDL_module, webhook_url: str) -> bool:
-    deno_path = ensure_portable_deno(YTDL_module, webhook_url)
-    return bool(deno_path and update_pot_provider(YTDL_module, webhook_url, deno_path))
+            shutil.rmtree(provider_dir)
+            print(f"Removed obsolete PO Provider directory: {provider_dir}")
+        if os.path.isfile(plugin_path):
+            os.remove(plugin_path)
+            print(f"Removed obsolete PO Provider plugin: {plugin_path}")
+    except OSError as e:
+        print(f"Unable to remove obsolete PO Provider artifacts: {e}", file=sys.stderr)
 
 
 def program_files_update(webhook_url: str):
@@ -559,7 +379,8 @@ def program_files_update(webhook_url: str):
         report_error_updater(f"Failed to import the updated YTDL.py module.\n{traceback.format_exc()}", webhook_url)
         return False
 
-    ensure_pot_provider(YTDL, webhook_url)
+    remove_legacy_pot_provider_files(YTDL)
+    ensure_portable_deno(YTDL, webhook_url)
     update_ffmpeg(YTDL, webhook_url)
     
     # --- Final Cleanup ---
@@ -592,18 +413,18 @@ def main():
             sys.exit(1)
         sys.exit(0 if update_ffmpeg(YTDL, webhook_url) else 1)
 
-    if len(sys.argv) > 1 and sys.argv[1] == "--ensure-pot-provider":
+    if len(sys.argv) > 1 and sys.argv[1] == "--ensure-deno":
         webhook_url = sys.argv[2] if len(sys.argv) > 2 else ""
         try:
             import YTDL
         except ImportError:
             report_error_updater(
-                f"Failed to import YTDL.py for PO provider setup.\n{traceback.format_exc()}",
+                f"Failed to import YTDL.py for Deno setup.\n{traceback.format_exc()}",
                 webhook_url,
-                "PO provider update",
+                "Deno update",
             )
             sys.exit(1)
-        sys.exit(0 if ensure_pot_provider(YTDL, webhook_url) else 1)
+        sys.exit(0 if ensure_portable_deno(YTDL, webhook_url) else 1)
 
     caller_script_path = sys.argv[1] if len(sys.argv) > 1 else None
     webhook_url = sys.argv[2] if len(sys.argv) > 2 else ""

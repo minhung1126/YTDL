@@ -9,7 +9,7 @@
   - **命令列模式 (`YTDL.py`)**: 適合下載單一影片或整個播放清單/頻道。
   - **圖形介面模式 (`YTDL_mul.py`)**: 自動監控剪貼簿，方便快速批次下載多個影片。
 - **智慧功能**:
-  - **啟動維護**: 程式啟動時會檢查程式本身與 yt-dlp 更新，並驗證或修復 FFmpeg、portable Deno 與 YouTube PO Token provider。
+  - **啟動維護**: 程式啟動時會檢查程式本身與 yt-dlp 更新，並驗證或修復 FFmpeg 與 portable Deno。
   - **依賴自動安裝**: 首次執行時自動安裝所需 Python 套件 (`requests`、`pyperclip`)，開箱即用。
   - **斷點續傳**: 若上次下載中斷，下次啟動時會詢問是否繼續。
 - **錯誤回報**: 內建 Discord Webhook 錯誤回報機制；回報含錯誤代碼、程式／系統版本、失敗網址或標題及診斷檔，便於開發者追查問題。
@@ -30,11 +30,11 @@
     ```
 
 3. **安裝 FFmpeg**: 程式會在 `yt-dlp` 所在目錄尋找 `yt-dlp-ffmpeg.exe` 及 `yt-dlp-ffprobe.exe`。啟動檢查發現檔案無法執行、無法識別 build 日期，或低於最低驗證日期時，會從 [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) 下載最新 build 修復。
-4. **安裝 Deno** *(可選)*: 若需要 Deno 相關功能，程式會在 `yt-dlp` 所在目錄尋找 `deno.exe`，更新時會自動下載。
+4. **安裝 Deno**: 程式會在 `yt-dlp` 所在目錄尋找 `deno.exe`，必要時自動下載，並將它交給 yt-dlp 處理 YouTube JavaScript challenge。
 
 ## 啟動與可攜式工具流程
 
-無論使用命令列或圖形介面，程式每次啟動都會先檢查程式本體與 `yt-dlp` 更新，再檢查可攜式 FFmpeg/FFprobe 與 provider 的本機完整性。provider 檢查涵蓋 plugin ZIP、Deno script、`node_modules`、版本標記、portable Deno，以及與 yt-dlp 相同的本機 `generate_once.ts --version` 啟動探測；這不會向 YouTube 發出測試請求，也不會產生 PO Token。探測無法在 yt-dlp 的 15 秒限制內完成時，程式會修復並預熱 provider；若仍失敗，下載會略過 provider 並保留 yt-dlp 的原有 fallback 行為。
+無論使用命令列或圖形介面，程式每次啟動都會先檢查程式本體與 `yt-dlp` 更新，再檢查可攜式 Deno 與 FFmpeg/FFprobe。Deno 會以 `--js-runtimes` 傳遞給 yt-dlp，處理 YouTube JavaScript challenge；若 Deno 修復失敗，下載會保留 yt-dlp 的原有 fallback 行為。
 
 ```mermaid
 flowchart TD
@@ -44,22 +44,16 @@ flowchart TD
     self_update --> restart["重新啟動"]
     restart --> start
     app_update -- "沒有" --> ytdlp["檢查並更新 yt-dlp nightly"]
-    ytdlp --> ffmpeg_check{"FFmpeg / FFprobe 可執行且<br/>build 日期達最低驗證日期？"}
+    ytdlp --> deno_check{"Deno 可執行且版本相符？"}
+    deno_check -- "否" --> deno_repair["下載 portable Deno 並驗證"]
+    deno_repair --> ffmpeg_check
+    deno_check -- "是" --> ffmpeg_check{"FFmpeg / FFprobe 可執行且<br/>build 日期達最低驗證日期？"}
     ffmpeg_check -- "否" --> ffmpeg_repair["下載 latest FFmpeg build 並驗證"]
-    ffmpeg_repair --> provider_check
-    ffmpeg_check -- "是" --> provider_check{"PO provider 完整且版本相符？"}
-    provider_check -- "否" --> provider_repair["修復 portable Deno 與 PO provider"]
-    provider_repair --> ready["進入 CLI 或 GUI"]
-    provider_check -- "是" --> ready
+    ffmpeg_repair --> ready["進入 CLI 或 GUI"]
+    ffmpeg_check -- "是" --> ready
 ```
 
-首次使用、FFmpeg/FFprobe 缺失或無法執行、其 build 日期低於 `Config.FFMPEG_MIN_BUILD_DATE`、provider 版本不符或檔案不完整時，程式會呼叫 `self_update.py` 修復相應依賴。FFmpeg 會下載上游 `latest` build，並以最低驗證日期作為可用性門檻；provider 版本仍由 `Config.BGUTIL_POT_PROVIDER_VERSION` 手動維護。只有需要修復或版本不符時，才會下載並初始化：
-
-   - `yt-dlp.exe` 同層的 `deno.exe`
-   - `yt-dlp-plugins\bgutil-ytdlp-pot-provider.zip`
-   - `bgutil-ytdlp-pot-provider\server\` 與其 Deno 依賴
-
-PO Token 在實際下載 YouTube 影片時才會由 yt-dlp 透過 BgUtils script provider 產生；程式會傳入 `mweb` client、portable Deno 路徑與 provider 的 `server_home`。這個模式不使用 Docker、PowerShell 啟動腳本或常駐 HTTP server。provider 修復失敗時，下載會保留 yt-dlp 原有行為，並在日誌中記錄警告。
+首次使用、Deno 缺失或版本不符、FFmpeg/FFprobe 缺失或無法執行，或其 build 日期低於 `Config.FFMPEG_MIN_BUILD_DATE` 時，程式會呼叫 `self_update.py` 修復相應依賴。Deno 會下載至 `yt-dlp.exe` 同層；FFmpeg 會下載上游 `latest` build，並以最低驗證日期作為可用性門檻。
 
 ## 如何使用
 
@@ -107,7 +101,7 @@ PO Token 在實際下載 YouTube 影片時才會由 yt-dlp 透過 BgUtils script
 |------|------|
 | `YTDL.py` | 核心模組 — 命令列模式入口，包含下載邏輯、組態、錯誤處理及自動更新 |
 | `YTDL_mul.py` | 圖形介面模式入口，匯入 `YTDL.py` 作為模組使用 |
-| `self_update.py` | 更新腳本 — 負責更新程式檔案及可攜式依賴 (yt-dlp、FFmpeg、Deno、BgUtils PO Token provider) |
+| `self_update.py` | 更新腳本 — 負責更新程式檔案及可攜式依賴 (yt-dlp、FFmpeg、Deno) |
 
 ## 開發者指南
 
@@ -126,7 +120,6 @@ PO Token 在實際下載 YouTube 影片時才會由 yt-dlp 透過 BgUtils script
 | `YT_DLP_VERSION_CHANNEL` | yt-dlp 更新頻道 (目前: `nightly`) |
 | `DENO_VERSION` | Deno 的固定版本號 |
 | `FFMPEG_MIN_BUILD_DATE` | FFmpeg/FFprobe 最低驗證的 `YYYYMMDD` build 日期；低於此日期、無法執行或無法解析日期時會下載 latest build 修復 |
-| `BGUTIL_POT_PROVIDER_VERSION` | BgUtils PO Token provider 的固定版本號 |
 
 `self_update.py` 會讀取這些值；其中 FFmpeg 會下載上游 latest build，並驗證其日期不低於 `FFMPEG_MIN_BUILD_DATE`。
 
