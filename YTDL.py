@@ -9,9 +9,12 @@ import sys
 import traceback
 import platform
 import base64
+import ctypes
+import hashlib
 import logging
 import io
 import time
+import tempfile
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any, Tuple, List, Optional, Dict, Callable
@@ -20,7 +23,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.07.22.02"
+__version__ = "v2026.07.22.03"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -350,6 +353,11 @@ class MetadataError(YTDLError):
     """Raised when metadata file operations fail."""
     reason_title_zh_tw = "讀取或寫入影片資訊操作失敗"
 
+class QueueBusyError(MetadataError):
+    """Raised when another YTDL instance owns this installation's queue."""
+    report = False
+    reason_title_zh_tw = "已有另一個下載器正在使用此佇列"
+
 class UpdateError(YTDLError):
     """Raised when self-update fails."""
     reason_title_zh_tw = "程式自動更新失敗"
@@ -357,6 +365,41 @@ class UpdateError(YTDLError):
 class SubprocessError(YTDLError):
     """Raised when a subprocess execution fails unexpectedly."""
     reason_title_zh_tw = "外部程式執行失敗"
+
+class DownloadQueueLock:
+    """A process-wide Windows mutex for the queue owned by one app directory."""
+    _ERROR_ALREADY_EXISTS = 183
+
+    def __init__(self, app_dir: str):
+        normalized_dir = os.path.normcase(os.path.abspath(app_dir))
+        app_id = hashlib.sha256(normalized_dir.encode("utf-8")).hexdigest()[:24]
+        self._name = f"Local\\YTDL-queue-{app_id}"
+        self._handle = None
+
+    def acquire(self) -> None:
+        if platform.system() != "Windows":
+            raise QueueBusyError("Download queue locking is only implemented for Windows.")
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p)
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        kernel32.CloseHandle.restype = ctypes.c_bool
+        handle = kernel32.CreateMutexW(None, False, self._name)
+        if not handle:
+            raise QueueBusyError(f"Unable to create the download queue lock (Win32 error {ctypes.get_last_error()}).")
+        if ctypes.get_last_error() == self._ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(handle)
+            raise QueueBusyError("Another YTDL window or command-line session is already using this download queue.")
+        self._handle = handle
+
+    def release(self) -> None:
+        if self._handle is None:
+            return
+        try:
+            ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(self._handle)
+        finally:
+            self._handle = None
 
 @dataclass
 class ErrorContext:
@@ -512,7 +555,34 @@ class Logger:
 
 class SubprocessRunner:
     @staticmethod
-    def run(args: list, context: dict = None) -> Tuple[int, str]:
+    def _terminate_process_tree(process: subprocess.Popen) -> None:
+        """Terminate yt-dlp and its FFmpeg children after a user cancellation."""
+        if process.poll() is not None:
+            return
+        try:
+            if platform.system() == "Windows":
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=15,
+                )
+            else:
+                process.terminate()
+        except (OSError, subprocess.SubprocessError):
+            try:
+                process.terminate()
+            except OSError:
+                pass
+
+    @staticmethod
+    def run(
+        args: list,
+        context: dict = None,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> Tuple[int, str]:
         if context is None:
             context = {}
         process = None
@@ -564,7 +634,12 @@ class SubprocessRunner:
             stdout_thread.start()
             stderr_thread.start()
             next_heartbeat_at = started_at + Config.SUBPROCESS_HEARTBEAT_SECONDS
+            cancellation_requested = False
             while process.poll() is None:
+                if cancel_event is not None and cancel_event.is_set() and not cancellation_requested:
+                    logging.info("Cancellation requested for subprocess PID %s.", process.pid)
+                    SubprocessRunner._terminate_process_tree(process)
+                    cancellation_requested = True
                 time.sleep(0.25)
                 now = time.monotonic()
                 if now >= next_heartbeat_at:
@@ -950,6 +1025,13 @@ class Video:
 
 class YTDLManager:
     @staticmethod
+    def acquire_queue_lock() -> DownloadQueueLock:
+        """Reserve this installation's metadata queue for one app instance."""
+        queue_lock = DownloadQueueLock(Config._APP_DIR)
+        queue_lock.acquire()
+        return queue_lock
+
+    @staticmethod
     def _detect_specific_error(log_text: str) -> Optional[YTDLError]:
         if not log_text:
             return None
@@ -1010,8 +1092,13 @@ class YTDLManager:
         return f"{err_obj.reason_title_zh_tw}\n詳細錯誤: {exception}\n錯誤代碼: {error_id}"
 
     @staticmethod
-    def dl_meta_from_url(url: str) -> Tuple[bool, Optional[str]]:
+    def dl_meta_from_url(
+        url: str,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> Tuple[bool, Optional[str]]:
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                return False, "Download cancelled."
             if not os.path.exists(Config.META_DIR):
                 os.makedirs(Config.META_DIR)
             
@@ -1036,7 +1123,12 @@ class YTDLManager:
                 else:
                     logging.warning("Portable Deno is unavailable; fetching metadata without a JS runtime: %s", reason)
 
-            returncode, full_log = SubprocessRunner.run(args, {"URL": url})
+            returncode, full_log = SubprocessRunner.run(
+                args, {"URL": url}, cancel_event=cancel_event
+            )
+
+            if cancel_event is not None and cancel_event.is_set():
+                return False, "Download cancelled."
 
             if returncode == 0:
                 return True, None
@@ -1059,7 +1151,7 @@ class YTDLManager:
         if not os.path.isdir(Config.META_DIR):
             return []
         videos = []
-        for f in os.listdir(Config.META_DIR):
+        for f in sorted(os.listdir(Config.META_DIR)):
             if not f.endswith('.json'):
                 continue
             v = Video(os.path.join(Config.META_DIR, f))
@@ -1068,11 +1160,23 @@ class YTDLManager:
         return videos
 
     @staticmethod
-    def download_video(video: Video) -> Tuple[bool, Optional[str]]:
+    def download_video(
+        video: Video,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> Tuple[bool, Optional[str]]:
         logging.info(f"--- Downloading: {video.title} ---")
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                return False, "Download cancelled."
             args = video.get_download_args()
-            returncode, full_log = SubprocessRunner.run(args, {"Title": video.title, "URL": video.webpage_url})
+            returncode, full_log = SubprocessRunner.run(
+                args,
+                {"Title": video.title, "URL": video.webpage_url},
+                cancel_event=cancel_event,
+            )
+
+            if cancel_event is not None and cancel_event.is_set():
+                return False, "Download cancelled."
 
             if returncode == 0:
                 os.remove(video.meta_filepath)
@@ -1097,11 +1201,15 @@ class YTDLManager:
             )
 
     @staticmethod
-    def download_pending_videos():
+    def download_pending_videos(cancel_event: Optional[threading.Event] = None):
         """Download every valid metadata file currently queued in the meta directory."""
         videos = YTDLManager.load_videos()
         for video in videos:
-            success, error = YTDLManager.download_video(video)
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            success, error = YTDLManager.download_video(video, cancel_event=cancel_event)
+            if cancel_event is not None and cancel_event.is_set():
+                break
             if not success:
                 print(f"Error downloading {video.title}: {error}")
 
@@ -1134,19 +1242,39 @@ class YTDLManager:
             
             if latest_version != __version__:
                 logging.info(f"New version found: {latest_version}. Updating...")
-                updater_script_name = "self_update.py"
+                updater_path = os.path.join(Config._APP_DIR, "self_update.py")
                 base_url = f"https://raw.githubusercontent.com/{repo}/main/"
-                resp = _http_get_with_retry(f"{base_url}{updater_script_name}", timeout=15)
-                with open(updater_script_name, 'wb') as f:
-                    f.write(resp.content)
-                subprocess.Popen([sys.executable, updater_script_name, os.path.abspath(sys.argv[0]), Config.DISCORD_WEBHOOK])
+                resp = _http_get_with_retry(f"{base_url}self_update.py", timeout=15)
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", delete=False, dir=Config._APP_DIR,
+                    prefix=".self_update-", suffix=".tmp",
+                ) as temporary_updater:
+                    temporary_updater.write(resp.content)
+                    temporary_updater_path = temporary_updater.name
+                try:
+                    compile(resp.content.decode("utf-8"), updater_path, "exec")
+                    os.replace(temporary_updater_path, updater_path)
+                except Exception:
+                    try:
+                        os.remove(temporary_updater_path)
+                    except OSError:
+                        pass
+                    raise
+                subprocess.Popen([
+                    sys.executable,
+                    updater_path,
+                    os.path.abspath(sys.argv[0]),
+                    Config.DISCORD_WEBHOOK,
+                    Config._APP_DIR,
+                    os.getcwd(),
+                ], cwd=Config._APP_DIR)
                 sys.exit(0)
             else:
                 logging.info("You are using the latest version.")
                 
             # Cleanup old updater
-            if os.path.exists("self_update.py"):
-                os.remove("self_update.py")
+            if os.path.exists(os.path.join(Config._APP_DIR, "self_update.py")):
+                os.remove(os.path.join(Config._APP_DIR, "self_update.py"))
                 
         except Exception:
             Logger.report_error(traceback.format_exc(), ctx=ErrorContext(
@@ -1289,8 +1417,10 @@ class YTDLManager:
 
 def main():
     Logger.setup()
+    queue_lock = None
     try:
         YTDLManager.run_startup_maintenance()
+        queue_lock = YTDLManager.acquire_queue_lock()
         while True:
             # Simple CLI Interaction
             if os.path.isdir(Config.META_DIR) and os.listdir(Config.META_DIR):
@@ -1318,10 +1448,16 @@ def main():
 
     except KeyboardInterrupt:
         sys.exit(0)
+    except QueueBusyError as e:
+        logging.error("%s", e)
+        print(f"ERROR: {e}")
     except Exception as e:
         Logger.report_error("Critical error in main loop", ctx=ErrorContext(
             traceback_str=traceback.format_exc(), exception=YTDLError(f"Critical: {e}")))
         input("Press ENTER to exit.")
+    finally:
+        if queue_lock is not None:
+            queue_lock.release()
 
 if __name__ == "__main__":
     main()

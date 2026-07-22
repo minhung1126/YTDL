@@ -3,6 +3,7 @@ import os
 import shutil
 import traceback
 import threading
+import queue
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import YTDL 
@@ -57,9 +58,13 @@ class ClipboardWatcherApp:
         self.clipboard_after_id = None
         self.download_thread = None
         self._cancel_download = threading.Event()
+        self._ui_events = queue.Queue()
+        self._closing = False
+        self._queue_lock = YTDL.YTDLManager.acquire_queue_lock()
 
         self.setup_widgets()
         self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.master.after(50, self._process_ui_events)
         
         # Check for incomplete downloads in meta directory
         self.check_and_handle_existing_meta()
@@ -197,9 +202,31 @@ class ClipboardWatcherApp:
         self.url_text.config(state=tk.DISABLED)
 
     def _schedule_error_popup(self, error_msg):
-        def show():
-            messagebox.showwarning("下載失敗 | Download Failed", f"錯誤原因 | Error Reason:\n{error_msg}")
-        self.master.after(0, show)
+        self._post_ui_event("error", error_msg)
+
+    def _post_ui_event(self, event_type, *payload):
+        """Send UI work from a worker thread to Tk's main event loop."""
+        self._ui_events.put((event_type, payload))
+
+    def _process_ui_events(self):
+        try:
+            while True:
+                event_type, payload = self._ui_events.get_nowait()
+                if event_type == "status" and not self._closing:
+                    self.status_var.set(payload[0])
+                elif event_type == "error" and not self._closing:
+                    messagebox.showwarning(
+                        "下載失敗 | Download Failed",
+                        f"錯誤原因 | Error Reason:\n{payload[0]}",
+                    )
+                elif event_type == "download_done" and not self._closing:
+                    self.watch_button.config(state=tk.NORMAL)
+                    self.download_button.config(state=tk.NORMAL)
+        except queue.Empty:
+            pass
+
+        if not self._closing:
+            self.master.after(50, self._process_ui_events)
 
     def _resume_from_meta(self):
         """Start downloading from existing meta files (resume flow)."""
@@ -209,7 +236,6 @@ class ClipboardWatcherApp:
         self._cancel_download.clear()
         self.download_thread = threading.Thread(target=self._download_worker, args=([],), daemon=True)
         self.download_thread.start()
-        self._check_download_thread()
 
     def start_download(self):
         if self.download_thread and self.download_thread.is_alive():
@@ -239,52 +265,77 @@ class ClipboardWatcherApp:
 
         self.download_thread = threading.Thread(target=self._download_worker, args=(urls_to_download,), daemon=True)
         self.download_thread.start()
-        self._check_download_thread()
 
     def _download_worker(self, urls):
         try:
             if urls:
-                self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_processing_meta"].format(count=len(urls))))
+                self._post_ui_event(
+                    "status", UI_TEXT["status_processing_meta"].format(count=len(urls))
+                )
                 for url in urls:
                     if self._cancel_download.is_set():
                         return
-                    success, error = YTDL.YTDLManager.dl_meta_from_url(url)
+                    success, error = YTDL.YTDLManager.dl_meta_from_url(
+                        url, cancel_event=self._cancel_download
+                    )
+                    if self._cancel_download.is_set():
+                        return
                     if not success:
                         self._schedule_error_popup(error)
 
-            self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_meta_done"]))
+            self._post_ui_event("status", UI_TEXT["status_meta_done"])
             videos_to_download = YTDL.YTDLManager.load_videos()
             total_videos = len(videos_to_download)
             for i, video in enumerate(videos_to_download):
                 if self._cancel_download.is_set():
-                    break
+                    return
                 title = video.title[:25]
-                self.master.after(0, lambda i=i, t=title: self.status_var.set(UI_TEXT["status_downloading"].format(i=i+1, total=total_videos, title=t)))
-                success, error = YTDL.YTDLManager.download_video(video)
+                self._post_ui_event(
+                    "status",
+                    UI_TEXT["status_downloading"].format(
+                        i=i + 1, total=total_videos, title=title
+                    ),
+                )
+                success, error = YTDL.YTDLManager.download_video(
+                    video, cancel_event=self._cancel_download
+                )
+                if self._cancel_download.is_set():
+                    return
                 if not success:
                     self._schedule_error_popup(error)
 
             YTDL.YTDLManager.cleanup_meta()
-            self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_all_done"]))
+            self._post_ui_event("status", UI_TEXT["status_all_done"])
         except Exception:
             error_message = "A critical error occurred during the download process."
-            self.master.after(0, lambda: self.status_var.set(UI_TEXT["status_error"]))
+            self._post_ui_event("status", UI_TEXT["status_error"])
             YTDL.Logger.report_error(error_message, ctx=YTDL.ErrorContext(traceback_str=traceback.format_exc()))
-
-    def _check_download_thread(self):
-        if self.download_thread.is_alive():
-            self.master.after(100, self._check_download_thread)
-        else:
-            self.watch_button.config(state=tk.NORMAL)
-            self.download_button.config(state=tk.NORMAL)
+        finally:
+            self._post_ui_event("download_done")
 
     def on_closing(self):
         if self.download_thread and self.download_thread.is_alive():
             if messagebox.askokcancel(UI_TEXT["msg_quit_title"], UI_TEXT["msg_quit_body"]):
+                self._closing = True
                 self._cancel_download.set()
-                self.master.destroy()
+                self.watch_button.config(state=tk.DISABLED)
+                self.download_button.config(state=tk.DISABLED)
+                self.status_var.set("正在停止下載程序… | Stopping download process…")
+                self._wait_for_download_then_close()
         else:
-            self.master.destroy()
+            self._close_window()
+
+    def _wait_for_download_then_close(self):
+        if self.download_thread and self.download_thread.is_alive():
+            self.master.after(100, self._wait_for_download_then_close)
+            return
+        self._close_window()
+
+    def _close_window(self):
+        if self._queue_lock is not None:
+            self._queue_lock.release()
+            self._queue_lock = None
+        self.master.destroy()
 
 if __name__ == "__main__":
     root = None

@@ -2,6 +2,10 @@
 
 ## Development Conventions
 
+### 0. File Creation
+
+- Do not add new files to this repository. Make required changes within the existing files.
+
 ### 1. Versioning
 
 - **Source**: `YTDL.py` -> `__version__`

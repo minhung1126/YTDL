@@ -244,7 +244,7 @@ def _portable_target_dir(YTDL_module) -> str:
     yt_dlp_path = shutil.which(executable)
     if yt_dlp_path:
         return os.path.dirname(os.path.abspath(yt_dlp_path))
-    return os.getcwd()
+    return os.path.abspath(_config_value(YTDL_module, "_APP_DIR", os.getcwd()))
 
 
 def _installed_deno_version(deno_path: str) -> Optional[str]:
@@ -336,9 +336,16 @@ def remove_legacy_pot_provider_files(YTDL_module) -> None:
         print(f"Unable to remove obsolete PO Provider artifacts: {e}", file=sys.stderr)
 
 
-def program_files_update(webhook_url: str):
-    cwd = os.getcwd()
+def program_files_update(webhook_url: str, app_dir: str):
+    """Validate a release in a staging directory before replacing app files."""
+    app_dir = os.path.abspath(app_dir)
+    if not os.path.isdir(app_dir):
+        report_error_updater(f"Application directory does not exist: {app_dir}", webhook_url)
+        return False
     api_url = "https://api.github.com/repos/minhung1126/YTDL"
+    stage_dir = None
+    backup_dir = None
+    replaced_files = []
 
     try:
         print("Fetching latest release information...")
@@ -352,23 +359,52 @@ def program_files_update(webhook_url: str):
         zipfile_content = io.BytesIO(zipfile_content_resp.content)
 
         to_extract_filenames = ["YTDL.py", "YTDL_mul.py"]
-        final_extract_list = [f for f in to_extract_filenames if os.path.exists(os.path.join(cwd, f))]
+        final_extract_list = [f for f in to_extract_filenames if os.path.exists(os.path.join(app_dir, f))]
         if "YTDL.py" not in final_extract_list:
             final_extract_list.append("YTDL.py")
 
-        print("Extracting files...")
+        stage_dir = tempfile.mkdtemp(prefix=".ytdl-program-update-", dir=app_dir)
+        backup_dir = tempfile.mkdtemp(prefix=".ytdl-program-backup-", dir=app_dir)
+        print("Validating updated program files...")
         with ZipFile(zipfile_content, 'r') as zipfile:
-            for filepath in zipfile.namelist():
-                filename = os.path.split(filepath)[-1]
-                if filename in final_extract_list:
-                    print(f"  - Extracting {filename}...")
-                    file_content = zipfile.read(filepath)
-                    with open(os.path.join(cwd, filename), 'wb') as f:
-                        f.write(file_content)
+            archive_members = zipfile.infolist()
+            for filename in final_extract_list:
+                matches = [
+                    member for member in archive_members
+                    if not member.is_dir() and os.path.basename(member.filename) == filename
+                ]
+                if len(matches) != 1:
+                    raise RuntimeError(
+                        f"Release archive must contain exactly one {filename}; found {len(matches)}."
+                    )
+                file_content = zipfile.read(matches[0])
+                compile(file_content.decode("utf-8"), filename, "exec")
+                with open(os.path.join(stage_dir, filename), "wb") as staged_file:
+                    staged_file.write(file_content)
+
+        print("Replacing program files...")
+        try:
+            for filename in final_extract_list:
+                target_path = os.path.join(app_dir, filename)
+                if os.path.isfile(target_path):
+                    shutil.copy2(target_path, os.path.join(backup_dir, filename))
+            for filename in final_extract_list:
+                os.replace(os.path.join(stage_dir, filename), os.path.join(app_dir, filename))
+                replaced_files.append(filename)
+        except Exception:
+            for filename in reversed(replaced_files):
+                backup_path = os.path.join(backup_dir, filename)
+                if os.path.isfile(backup_path):
+                    os.replace(backup_path, os.path.join(app_dir, filename))
+            raise
 
     except Exception:
         error_message = f"Failed to download or extract program files.\n{traceback.format_exc()}"
         report_error_updater(error_message, webhook_url)
+        if stage_dir:
+            shutil.rmtree(stage_dir, ignore_errors=True)
+        if backup_dir:
+            shutil.rmtree(backup_dir, ignore_errors=True)
         return False
 
     try:
@@ -376,8 +412,17 @@ def program_files_update(webhook_url: str):
         # Since this script is a separate process, we can safely import the newly downloaded module.
         # If this script were part of a larger, long-running app, we'd use importlib.reload().
     except ImportError:
+        for filename in reversed(replaced_files):
+            backup_path = os.path.join(backup_dir, filename)
+            if os.path.isfile(backup_path):
+                os.replace(backup_path, os.path.join(app_dir, filename))
         report_error_updater(f"Failed to import the updated YTDL.py module.\n{traceback.format_exc()}", webhook_url)
         return False
+    finally:
+        if stage_dir:
+            shutil.rmtree(stage_dir, ignore_errors=True)
+        if backup_dir:
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
     remove_legacy_pot_provider_files(YTDL)
     ensure_portable_deno(YTDL, webhook_url)
@@ -390,9 +435,10 @@ def program_files_update(webhook_url: str):
     print("==================================================")
 
     print("Cleaning up...")
-    if os.path.exists("__pycache__"):
+    pycache_dir = os.path.join(app_dir, "__pycache__")
+    if os.path.exists(pycache_dir):
         try:
-            shutil.rmtree("__pycache__")
+            shutil.rmtree(pycache_dir)
             print("Removed __pycache__ directory.")
         except OSError as e:
             print(f"Error removing __pycache__: {e}")
@@ -428,8 +474,12 @@ def main():
 
     caller_script_path = sys.argv[1] if len(sys.argv) > 1 else None
     webhook_url = sys.argv[2] if len(sys.argv) > 2 else ""
+    app_dir = sys.argv[3] if len(sys.argv) > 3 else os.path.dirname(
+        os.path.abspath(caller_script_path or __file__)
+    )
+    launch_cwd = sys.argv[4] if len(sys.argv) > 4 else app_dir
 
-    update_succeeded = program_files_update(webhook_url)
+    update_succeeded = program_files_update(webhook_url, app_dir)
 
     if not update_succeeded:
         print("Update failed. The application will not be restarted.")
@@ -439,7 +489,8 @@ def main():
     print("Update complete. Restarting application...")
     if caller_script_path and os.path.exists(caller_script_path):
         try:
-            subprocess.Popen([sys.executable, caller_script_path])
+            restart_cwd = launch_cwd if os.path.isdir(launch_cwd) else app_dir
+            subprocess.Popen([sys.executable, caller_script_path], cwd=restart_cwd)
             sys.exit(0)
         except Exception:
             error_message = f"Failed to restart the application at {caller_script_path}.\n{traceback.format_exc()}"
