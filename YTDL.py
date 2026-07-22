@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import re
 import threading
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 import sys
 import traceback
 import platform
@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.07.21.02"
+__version__ = "v2026.07.22.01"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -155,20 +155,89 @@ class Config:
     PROGRESS_BAR_SECONDS = "2"  # String: passed directly as CLI args to yt-dlp
     SUBPROCESS_HEARTBEAT_SECONDS = 60
 
-    # Regex
-    YOUTUBE_REGEX = r'(?:https?://)?(?:www\.)?(?:m\.)?(?:youtube\.com|youtu\.be)/(?:watch\?v=|embed/|v/|shorts/|playlist\?|channel/|c/|user/|@)?[\w\-?=&%]+'
+    # Supported YouTube URL families.  Keep this list structural rather than
+    # accepting arbitrary paths below a YouTube hostname.
+    _YOUTUBE_WEB_HOSTS = frozenset({
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+    })
+    _YOUTUBE_MUSIC_HOSTS = frozenset({"music.youtube.com"})
+    _YOUTUBE_NOCOOKIE_HOSTS = frozenset({
+        "youtube-nocookie.com",
+        "www.youtube-nocookie.com",
+    })
+    _YOUTUBE_CHANNEL_TABS = frozenset({
+        "featured",
+        "videos",
+        "shorts",
+        "streams",
+        "live",
+        "playlists",
+        "community",
+    })
+
+    @staticmethod
+    def _youtube_url_kind(url: str) -> Optional[str]:
+        """Classify a supported YouTube URL as video, playlist, or channel."""
+        if not url or not url.strip():
+            return None
+
+        candidate = url.strip()
+        if "://" not in candidate:
+            candidate = f"https://{candidate}"
+        parsed = urlparse(candidate)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return None
+
+        host = parsed.hostname.lower()
+        path_parts = tuple(part for part in parsed.path.split("/") if part)
+        query = parse_qs(parsed.query)
+
+        if host in {"youtu.be", "www.youtu.be"}:
+            return "video" if len(path_parts) == 1 else None
+
+        if host in Config._YOUTUBE_NOCOOKIE_HOSTS:
+            return "video" if len(path_parts) == 2 and path_parts[0] == "embed" else None
+
+        if host in Config._YOUTUBE_MUSIC_HOSTS:
+            if path_parts == ("watch",) and query.get("v"):
+                return "video"
+            if path_parts == ("playlist",) and query.get("list"):
+                return "playlist"
+            return None
+
+        if host not in Config._YOUTUBE_WEB_HOSTS:
+            return None
+
+        if path_parts == ("watch",) and query.get("v"):
+            return "video"
+        if len(path_parts) == 2 and path_parts[0] in {"embed", "v", "shorts", "live", "clip"}:
+            return "video"
+        if path_parts == ("playlist",) and query.get("list"):
+            return "playlist"
+
+        if len(path_parts) >= 2 and path_parts[0] in {"channel", "c", "user"}:
+            if len(path_parts) == 2:
+                return "channel"
+            if len(path_parts) == 3 and path_parts[2] in Config._YOUTUBE_CHANNEL_TABS:
+                return "channel"
+        if path_parts and path_parts[0].startswith("@"):
+            if len(path_parts) == 1:
+                return "channel"
+            if len(path_parts) == 2 and path_parts[1] in Config._YOUTUBE_CHANNEL_TABS:
+                return "channel"
+
+        return None
 
     @staticmethod
     def is_youtube_url(url: str) -> bool:
-        if not url:
-            return False
-        return bool(re.search(Config.YOUTUBE_REGEX, url, re.IGNORECASE))
+        return Config._youtube_url_kind(url) is not None
 
     @staticmethod
     def is_playlist_or_channel_url(url: str) -> bool:
         """Check if a URL points to a playlist or channel."""
-        parsed = urlparse(url)
-        return '/playlist' in parsed.path or '/channel/' in parsed.path or '/c/' in parsed.path or parsed.path.startswith('/@')
+        return Config._youtube_url_kind(url) in {"playlist", "channel"}
 
     @classmethod
     def get_yt_dlp_dir(cls) -> str:
