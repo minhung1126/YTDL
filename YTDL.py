@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 sys.dont_write_bytecode = True
 
 # --- App Versioning ---
-__version__ = "v2026.07.22.01"
+__version__ = "v2026.07.22.02"
 if os.path.exists('.gitignore'):
     __version__ = "dev"
 # ----------------------
@@ -176,6 +176,19 @@ class Config:
         "playlists",
         "community",
     })
+    _YOUTUBE_URL_CANDIDATE_RE = re.compile(
+        r"""(?ix)
+        (?<![\w.-])
+        (?:https?://)?
+        (?:
+            (?:www\.)?youtu\.be
+            |(?:www\.|m\.)?youtube\.com
+            |music\.youtube\.com
+            |(?:www\.)?youtube-nocookie\.com
+        )
+        [^\s<>\"']*
+        """
+    )
 
     @staticmethod
     def _youtube_url_kind(url: str) -> Optional[str]:
@@ -233,6 +246,20 @@ class Config:
     @staticmethod
     def is_youtube_url(url: str) -> bool:
         return Config._youtube_url_kind(url) is not None
+
+    @classmethod
+    def extract_youtube_urls(cls, text: str) -> List[str]:
+        """Extract supported YouTube URLs from arbitrary clipboard text."""
+        if not isinstance(text, str):
+            return []
+
+        urls = []
+        for candidate in cls._YOUTUBE_URL_CANDIDATE_RE.findall(text):
+            # Common surrounding prose punctuation is not part of a URL.
+            url = candidate.rstrip(".,;:!?)]}")
+            if cls.is_youtube_url(url):
+                urls.append(url)
+        return urls
 
     @staticmethod
     def is_playlist_or_channel_url(url: str) -> bool:

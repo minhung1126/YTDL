@@ -1,6 +1,5 @@
 import sys
 import os
-import re
 import shutil
 import traceback
 import threading
@@ -178,7 +177,7 @@ class ClipboardWatcherApp:
         try:
             current_clipboard = pyperclip.paste()
             if current_clipboard:
-                found_urls = re.findall(YTDL.Config.YOUTUBE_REGEX, current_clipboard)
+                found_urls = YTDL.Config.extract_youtube_urls(current_clipboard)
                 for url in found_urls:
                     if url not in self.detected_urls:
                         self.detected_urls.add(url)

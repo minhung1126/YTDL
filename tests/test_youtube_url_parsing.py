@@ -57,6 +57,22 @@ class YouTubeUrlParsingTests(unittest.TestCase):
                 self.assertFalse(Config.is_youtube_url(url))
                 self.assertFalse(Config.is_playlist_or_channel_url(url))
 
+    def test_extracts_supported_urls_from_clipboard_text(self):
+        clipboard_text = (
+            "Watch https://youtu.be/KZjViXrAycM?si=share, then "
+            "https://youtube.com/@example/videos. Ignore "
+            "https://example.com/watch?v=KZjViXrAycM and "
+            "https://notyoutube.com/watch?v=KZjViXrAycM."
+        )
+
+        self.assertEqual(
+            Config.extract_youtube_urls(clipboard_text),
+            [
+                "https://youtu.be/KZjViXrAycM?si=share",
+                "https://youtube.com/@example/videos",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
